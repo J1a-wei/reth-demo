@@ -1,0 +1,38 @@
+[package]
+name = "dex-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Internal
+dex-dexvm = { workspace = true }
+dex-primitives = { workspace = true }
+dex-rpc = { workspace = true }
+dex-storage = { workspace = true }
+
+# Web framework
+axum = { workspace = true }
+
+# Reth
+reth-ethereum-primitives = { workspace = true }
+reth-execution-errors = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# Primitives
+alloy-primitives = { workspace = true }
+alloy-consensus = { workspace = true }
+
+# Error handling
+eyre = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# JSON-RPC
+jsonrpsee = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

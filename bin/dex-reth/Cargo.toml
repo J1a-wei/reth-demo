@@ -1,0 +1,34 @@
+[package]
+name = "dex-reth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "dex-reth"
+path = "src/main.rs"
+
+[dependencies]
+# Internal
+dex-node = { workspace = true }
+dex-p2p = { workspace = true }
+
+# Primitives
+alloy-primitives = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# Error handling
+eyre = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }

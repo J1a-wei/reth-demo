@@ -1,0 +1,83 @@
+[workspace]
+members = [
+    "crates/primitives",
+    "crates/dexvm",
+    "crates/storage",
+    "crates/evm",
+    "crates/rpc",
+    "crates/node",
+    "crates/p2p",
+    "bin/dex-reth",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.84"
+
+[workspace.dependencies]
+# Internal crates
+dex-primitives = { path = "crates/primitives" }
+dex-dexvm = { path = "crates/dexvm" }
+dex-storage = { path = "crates/storage" }
+dex-evm = { path = "crates/evm" }
+dex-rpc = { path = "crates/rpc" }
+dex-node = { path = "crates/node" }
+dex-p2p = { path = "crates/p2p" }
+
+# Revm
+revm = { version = "27", default-features = false, features = ["std"] }
+
+# Reth dependencies
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }
+reth-execution-errors = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }
+reth-db = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1", features = ["mdbx", "test-utils"] }
+reth-db-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }
+reth-codecs = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }
+
+# Alloy dependencies (match reth v1.5.1)
+alloy-primitives = { version = "1.0", default-features = false, features = ["std", "serde", "map-foldhash"] }
+alloy-consensus = { version = "1.0", default-features = false, features = ["std"] }
+alloy-rlp = { version = "0.3", default-features = false }
+
+# Web framework
+axum = { version = "0.7", features = ["macros"] }
+
+# JSON-RPC
+jsonrpsee = { version = "0.24", features = ["server", "macros"] }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+eyre = "0.6"
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Bytes
+bytes = "1"
+
+# Hex encoding
+hex = "0.4"
+
+# Testing
+tempfile = "3"
+tower = "0.5"
+
+[profile.release]
+lto = true
+codegen-units = 1

@@ -1,0 +1,41 @@
+[package]
+name = "dex-p2p"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Reth P2P
+reth-network-peers = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1", features = ["secp256k1", "net"] }
+reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }
+reth-ecies = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }
+
+# Primitives
+alloy-primitives = { workspace = true }
+alloy-rlp = { workspace = true }
+
+# Crypto
+secp256k1 = { version = "0.30", features = ["global-context", "recovery", "rand"] }
+
+# Async
+tokio = { workspace = true }
+tokio-stream = "0.1"
+futures = "0.3"
+
+# Serialization
+serde = { workspace = true }
+
+# Error handling
+eyre = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Misc
+bytes = { workspace = true }
+rand = "0.8"
+parking_lot = "0.12"
+
+[dev-dependencies]
+tempfile = { workspace = true }
