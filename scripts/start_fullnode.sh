@@ -1,6 +1,6 @@
 #!/bin/bash
-# Start Full Node (Read-Only)
-# 启动全节点（只读）
+# Start Full Node (Read-Only) with P2P connection to validator
+# 启动全节点（只读）并通过P2P连接验证者
 
 set -e
 
@@ -13,6 +13,7 @@ GENESIS="${GENESIS:-$PROJECT_DIR/genesis.json}"
 EVM_RPC_PORT="${EVM_RPC_PORT:-8546}"
 DEXVM_PORT="${DEXVM_PORT:-9846}"
 P2P_PORT="${P2P_PORT:-30304}"
+BOOTNODE="${BOOTNODE:-}"
 
 echo "=========================================="
 echo "Starting Full Node (Read-Only)"
@@ -22,6 +23,11 @@ echo "Genesis File: $GENESIS"
 echo "EVM RPC Port: $EVM_RPC_PORT"
 echo "DexVM Port: $DEXVM_PORT"
 echo "P2P Port: $P2P_PORT"
+if [ -n "$BOOTNODE" ]; then
+    echo "Bootnode: $BOOTNODE"
+else
+    echo "Bootnode: (not specified)"
+fi
 echo "=========================================="
 echo ""
 
@@ -37,6 +43,12 @@ echo ""
 echo "Starting node..."
 echo ""
 
+# Construct bootnode argument if provided
+BOOTNODE_ARG=""
+if [ -n "$BOOTNODE" ]; then
+    BOOTNODE_ARG="--bootnodes $BOOTNODE"
+fi
+
 # Start the node (without consensus - read only)
 exec cargo run --release --bin dex-reth -- \
     --datadir "$DATADIR" \
@@ -44,4 +56,5 @@ exec cargo run --release --bin dex-reth -- \
     --evm-rpc-port "$EVM_RPC_PORT" \
     --dexvm-port "$DEXVM_PORT" \
     --enable-p2p \
-    --p2p-port "$P2P_PORT"
+    --p2p-port "$P2P_PORT" \
+    $BOOTNODE_ARG

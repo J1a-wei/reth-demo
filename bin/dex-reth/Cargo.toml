@@ -16,6 +16,9 @@ dex-p2p = { workspace = true }
 # Primitives
 alloy-primitives = { workspace = true }
 
+# Reth
+reth-network-peers = { workspace = true }
+
 # Async
 tokio = { workspace = true }
 

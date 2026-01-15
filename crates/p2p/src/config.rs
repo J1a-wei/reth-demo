@@ -5,7 +5,10 @@ use reth_network_peers::TrustedPeer;
 use secp256k1::SecretKey;
 use std::{
     collections::HashSet,
+    fs,
+    io::{self, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::Path,
 };
 
 /// Default P2P port
@@ -47,6 +50,48 @@ impl P2pConfig {
     /// Generate random secret key
     pub fn random_secret_key() -> SecretKey {
         SecretKey::new(&mut rand::thread_rng())
+    }
+
+    /// Load secret key from file, or create and save a new one
+    pub fn load_or_create_secret_key(path: &Path) -> io::Result<SecretKey> {
+        if path.exists() {
+            // Load existing key
+            let hex_str = fs::read_to_string(path)?;
+            let hex_str = hex_str.trim();
+            let bytes = hex::decode(hex_str)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            if bytes.len() != 32 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid secret key length",
+                ));
+            }
+            SecretKey::from_slice(&bytes)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+        } else {
+            // Create new key and save it
+            let secret_key = Self::random_secret_key();
+            Self::save_secret_key(&secret_key, path)?;
+            Ok(secret_key)
+        }
+    }
+
+    /// Save secret key to file
+    pub fn save_secret_key(key: &SecretKey, path: &Path) -> io::Result<()> {
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let hex_str = hex::encode(key.secret_bytes());
+        let mut file = fs::File::create(path)?;
+        file.write_all(hex_str.as_bytes())?;
+        // Set file permissions to owner-only read/write on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
     }
 
     /// Set listen address

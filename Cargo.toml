@@ -37,6 +37,7 @@ reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth.git", tag 
 reth-db = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1", features = ["mdbx", "test-utils"] }
 reth-db-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }
 reth-codecs = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }
+reth-network-peers = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1", features = ["secp256k1", "net"] }
 
 # Alloy dependencies (match reth v1.5.1)
 alloy-primitives = { version = "1.0", default-features = false, features = ["std", "serde", "map-foldhash"] }

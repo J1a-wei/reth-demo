@@ -2,10 +2,11 @@
 //!
 //! A dual virtual machine blockchain node with EVM and DexVM support.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{hex, keccak256, Address, B256, U256};
 use clap::Parser;
 use dex_node::{DualVmNode, PoaConfig};
 use dex_p2p::{P2pConfig, P2pService};
+use reth_network_peers::TrustedPeer;
 use serde::Deserialize;
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
@@ -136,18 +137,47 @@ async fn main() -> eyre::Result<()> {
     let _p2p_handle = if cli.enable_p2p {
         tracing::info!("P2P networking enabled on port {}", cli.p2p_port);
 
-        let p2p_config = P2pConfig::new(
-            P2pConfig::random_secret_key(),
-            chain_id,
-            genesis_hash,
-        )
-        .with_port(cli.p2p_port)
-        .with_max_peers(cli.max_peers);
+        // Load or create persistent P2P secret key
+        let key_path = cli.datadir.join("p2p_key");
+        let secret_key = match P2pConfig::load_or_create_secret_key(&key_path) {
+            Ok(key) => {
+                tracing::info!("P2P key loaded from: {}", key_path.display());
+                key
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load P2P key: {}, generating new key", e);
+                P2pConfig::random_secret_key()
+            }
+        };
+        let mut p2p_config = P2pConfig::new(secret_key, chain_id, genesis_hash)
+            .with_port(cli.p2p_port)
+            .with_max_peers(cli.max_peers);
+
+        // Add boot nodes from CLI
+        for bootnode in &cli.bootnodes {
+            match bootnode.parse::<TrustedPeer>() {
+                Ok(peer) => {
+                    tracing::info!("Adding bootnode: {}", bootnode);
+                    p2p_config = p2p_config.with_boot_node(peer);
+                }
+                Err(e) => {
+                    tracing::warn!("Invalid bootnode URL '{}': {}", bootnode, e);
+                }
+            }
+        }
 
         let p2p_service = P2pService::new(p2p_config);
         let handle = p2p_service.start().await?;
 
-        tracing::info!("P2P service started, local_id={:?}", handle.local_id());
+        // Display enode URL for other nodes to connect
+        let local_id = handle.local_id();
+        tracing::info!("P2P service started");
+        tracing::info!("Local peer ID: {:?}", local_id);
+        tracing::info!(
+            "Enode URL: enode://{}@127.0.0.1:{}",
+            hex::encode(local_id.as_slice()),
+            cli.p2p_port
+        );
 
         Some(handle)
     } else {
