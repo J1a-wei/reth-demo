@@ -101,10 +101,12 @@ Transactions are routed based on the `to` address:
 
 ### Precompile Contract
 
-Deposit/withdraw precompile at `0x0000000000000000000000000000000000000100`:
-- Send ETH with empty calldata = Deposit
-- Send calldata with amount = Withdraw
-- Empty call = Query balance
+Counter precompile at `0x0000000000000000000000000000000000000100`:
+
+Calldata format: `[op: 1 byte][amount: 8 bytes big-endian]`
+- `0x00` + amount = Increment counter
+- `0x01` + amount = Decrement counter
+- `0x02` + padding = Query counter
 
 ### State Root Calculation
 

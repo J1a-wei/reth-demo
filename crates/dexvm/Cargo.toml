@@ -14,9 +14,5 @@ reth-execution-errors = { workspace = true }
 # Primitives
 alloy-primitives = { workspace = true }
 
-# Error handling
-eyre = { workspace = true }
-thiserror = { workspace = true }
-
 # Logging
 tracing = { workspace = true }

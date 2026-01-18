@@ -63,7 +63,11 @@ impl DualVmNode {
             DualvmStorage::new(&config.datadir).expect("Failed to initialize MDBX database"),
         );
 
-        let evm_executor = Arc::new(RwLock::new(SimpleEvmExecutor::new(config.chain_id)));
+        // Create EVM executor backed by the shared StateStore
+        let evm_executor = Arc::new(RwLock::new(SimpleEvmExecutor::new(
+            config.chain_id,
+            Arc::clone(&storage.state),
+        )));
         let dexvm_executor = Arc::new(RwLock::new(DexExecutor::new(DexVmState::default())));
         let executor = DualVmExecutor::new(evm_executor, Arc::clone(&dexvm_executor));
 
@@ -97,7 +101,7 @@ impl DualVmNode {
             tracing::info!("New database detected, initializing genesis state");
             storage
                 .state
-                .init_genesis(genesis_alloc.clone())
+                .init_genesis(genesis_alloc)
                 .expect("Failed to init genesis state");
 
             let mut genesis = StoredBlock::genesis(chain_id);
@@ -112,19 +116,27 @@ impl DualVmNode {
             );
         }
 
-        let evm_executor = if storage.is_new_database() {
-            Arc::new(RwLock::new(SimpleEvmExecutor::with_genesis(chain_id, genesis_alloc)))
-        } else {
-            let mut executor = SimpleEvmExecutor::new(chain_id);
-            let accounts = storage.state.all_accounts();
-            for (address, account) in accounts {
-                executor.set_balance(address, account.balance);
-            }
-            tracing::info!("Loaded {} accounts from storage", executor.account_count());
-            Arc::new(RwLock::new(executor))
-        };
+        // Create EVM executor backed by the shared StateStore
+        // No need to manually load accounts - StateStore handles persistence
+        let evm_executor = Arc::new(RwLock::new(SimpleEvmExecutor::new(
+            chain_id,
+            Arc::clone(&storage.state),
+        )));
+        tracing::info!("EVM executor initialized with {} accounts",
+            storage.state.all_accounts().len());
 
-        let dexvm_executor = Arc::new(RwLock::new(DexExecutor::new(DexVmState::default())));
+        // Load DexVM state from database
+        let dexvm_executor = if storage.is_new_database() {
+            Arc::new(RwLock::new(DexExecutor::new(DexVmState::default())))
+        } else {
+            let mut dexvm_state = DexVmState::new();
+            let counters = storage.state.all_counters();
+            for (address, value) in counters {
+                dexvm_state.set_counter(address, value);
+            }
+            tracing::info!("Loaded {} DexVM counters from storage", dexvm_state.account_count());
+            Arc::new(RwLock::new(DexExecutor::new(dexvm_state)))
+        };
         let executor = DualVmExecutor::new(evm_executor, Arc::clone(&dexvm_executor));
 
         Self { config, executor, dexvm_executor, consensus: None, storage, evm_rpc_server: None }
@@ -197,10 +209,9 @@ impl DualVmNode {
 
     /// Start EVM JSON-RPC service
     pub async fn start_evm_rpc(&mut self, port: u16) -> eyre::Result<ServerHandle> {
-        let state_store = Arc::new(StateStore::new(Arc::clone(&self.storage.db)));
-        let block_store = Arc::new(
-            BlockStore::new(Arc::clone(&self.storage.db)).expect("Failed to create block store"),
-        );
+        // Use the shared block_store and state_store from storage
+        let state_store = Arc::clone(&self.storage.state);
+        let block_store = Arc::clone(&self.storage.blocks);
 
         let (handle, server) =
             start_evm_rpc_server(self.config.chain_id, state_store, block_store, port).await?;
@@ -282,10 +293,20 @@ impl DualVmNode {
                             combined_state_root: result.combined_state_root,
                             transaction_hashes: tx_hashes,
                             transaction_count: all_transactions.len() as u64,
+                            signature: proposal.signature.to_bytes(),
                         };
 
                         if let Err(e) = self.storage.blocks.store_block(stored_block) {
                             tracing::error!("Failed to store block: {}", e);
+                        }
+
+                        // Persist DexVM state to database
+                        if let Ok(dexvm_exec) = self.dexvm_executor.read() {
+                            for (address, &value) in dexvm_exec.state().all_accounts() {
+                                if let Err(e) = self.storage.state.set_counter(*address, value) {
+                                    tracing::error!("Failed to persist DexVM counter for {}: {}", address, e);
+                                }
+                            }
                         }
 
                         consensus.finalize_block(result.combined_state_root);

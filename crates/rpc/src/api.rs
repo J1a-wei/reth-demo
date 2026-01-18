@@ -11,6 +11,7 @@ use axum::{
 use dex_dexvm::{DexVmExecutor, DexVmOperation, DexVmTransaction};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
+use tracing::{debug, info, warn};
 
 /// DexVM REST API service
 #[derive(Clone)]
@@ -127,6 +128,8 @@ async fn get_counter(
 
     let counter = executor.state().get_counter(&address);
 
+    debug!(address = %address, counter = counter, "DexVM counter queried");
+
     Ok(Json(CounterResponse { address, counter }))
 }
 
@@ -136,6 +139,7 @@ async fn increment_counter(
     Json(req): Json<IncrementRequest>,
 ) -> Result<Json<OperationResponse>, ApiError> {
     if req.amount == 0 {
+        warn!(address = %address, "DexVM increment rejected: amount is 0");
         return Err(ApiError::bad_request("Amount must be greater than 0"));
     }
 
@@ -154,6 +158,17 @@ async fn increment_counter(
 
     executor.commit();
 
+    info!(
+        address = %address,
+        operation = "increment",
+        amount = req.amount,
+        old_counter = result.old_counter,
+        new_counter = result.new_counter,
+        tx_hash = %tx_hash,
+        gas_used = result.gas_used,
+        "DexVM counter incremented"
+    );
+
     Ok(Json(OperationResponse {
         success: result.success,
         tx_hash,
@@ -170,6 +185,7 @@ async fn decrement_counter(
     Json(req): Json<DecrementRequest>,
 ) -> Result<Json<OperationResponse>, ApiError> {
     if req.amount == 0 {
+        warn!(address = %address, "DexVM decrement rejected: amount is 0");
         return Err(ApiError::bad_request("Amount must be greater than 0"));
     }
 
@@ -187,6 +203,29 @@ async fn decrement_counter(
         executor.execute_transaction(&tx).map_err(|e| ApiError::internal_error(e.to_string()))?;
 
     executor.commit();
+
+    if result.success {
+        info!(
+            address = %address,
+            operation = "decrement",
+            amount = req.amount,
+            old_counter = result.old_counter,
+            new_counter = result.new_counter,
+            tx_hash = %tx_hash,
+            gas_used = result.gas_used,
+            "DexVM counter decremented"
+        );
+    } else {
+        warn!(
+            address = %address,
+            operation = "decrement",
+            amount = req.amount,
+            old_counter = result.old_counter,
+            tx_hash = %tx_hash,
+            error = ?result.error,
+            "DexVM decrement failed"
+        );
+    }
 
     Ok(Json(OperationResponse {
         success: result.success,

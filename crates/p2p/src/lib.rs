@@ -29,12 +29,18 @@
 //! ```
 
 pub mod config;
+pub mod eth_handler;
 pub mod peer;
 pub mod service;
+pub mod session;
 
 pub use config::{P2pConfig, DEFAULT_P2P_PORT};
+pub use eth_handler::{BlockHashOrNumber, EthHandlerCommand, EthHandlerEvent};
 pub use peer::{PeerInfo, PeerManager, PeerState, SharedPeerManager};
-pub use service::{P2pEvent, P2pHandle, P2pService, P2pServiceBuilder};
+pub use service::{P2pEvent, P2pHandle, P2pService, P2pServiceBuilder, SessionCommand};
 
 /// Re-export reth network peer types
 pub use reth_network_peers::{pk2id, PeerId, TrustedPeer};
+
+/// Re-export ETH wire types
+pub use reth_eth_wire_types::HashOrNumber;

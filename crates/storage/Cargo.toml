@@ -18,6 +18,7 @@ bytes = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
+hex = { workspace = true }
 
 # Error handling
 eyre = { workspace = true }

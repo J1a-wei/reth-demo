@@ -7,7 +7,10 @@ pub mod precompiles;
 pub mod state;
 
 pub use executor::DexVmExecutor;
-pub use precompiles::{PrecompileExecutor, PrecompileResult, PrecompileState, DEPOSIT_PRECOMPILE_ADDRESS};
+pub use precompiles::{
+    PrecompileExecutor, PrecompileOperation, PrecompileResult, COUNTER_PRECOMPILE_ADDRESS,
+    OP_DECREMENT, OP_INCREMENT, OP_QUERY,
+};
 pub use state::DexVmState;
 
 // Re-export transaction types for convenience

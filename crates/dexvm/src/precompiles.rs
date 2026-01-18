@@ -1,20 +1,27 @@
-use alloy_primitives::{Address, U256};
+use crate::state::DexVmState;
+use alloy_primitives::Address;
 use reth_execution_errors::BlockExecutionError;
-use std::collections::HashMap;
 
-/// Deposit/withdraw precompile address
-pub const DEPOSIT_PRECOMPILE_ADDRESS: Address =
+/// Counter precompile address (for EVM → DexVM cross-VM calls)
+pub const COUNTER_PRECOMPILE_ADDRESS: Address =
     alloy_primitives::address!("0000000000000000000000000000000000000100");
+
+/// Counter operation opcodes
+pub const OP_INCREMENT: u8 = 0x00;
+pub const OP_DECREMENT: u8 = 0x01;
+pub const OP_QUERY: u8 = 0x02;
 
 /// Precompile operation type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrecompileOperation {
-    /// Deposit - value: deposit amount
-    Deposit,
-    /// Withdraw - calldata: amount (32 bytes)
-    Withdraw,
-    /// Query balance - calldata: empty
-    GetBalance,
+    /// Increment counter - calldata: [0x00][amount: 8 bytes]
+    IncrementCounter(u64),
+    /// Decrement counter - calldata: [0x01][amount: 8 bytes]
+    DecrementCounter(u64),
+    /// Query counter - calldata: [0x02][padding: 8 bytes]
+    QueryCounter,
+    /// Invalid operation
+    Invalid,
 }
 
 /// Precompile execution result
@@ -30,152 +37,133 @@ pub struct PrecompileResult {
     pub error: Option<String>,
 }
 
-/// Precompile state
-///
-/// Manages ETH balances for the deposit/withdraw precompile
-#[derive(Debug, Clone, Default)]
-pub struct PrecompileState {
-    /// Account balances
-    balances: HashMap<Address, U256>,
-}
+/// Gas constants for counter operations
+const COUNTER_INCREMENT_GAS: u64 = 26000;
+const COUNTER_DECREMENT_GAS: u64 = 26000;
+const COUNTER_QUERY_GAS: u64 = 24000;
 
-impl PrecompileState {
-    /// Create new state
-    pub fn new() -> Self {
-        Self { balances: HashMap::new() }
-    }
-
-    /// Deposit ETH
-    pub fn deposit(&mut self, address: Address, amount: U256) {
-        let balance = self.balances.entry(address).or_insert(U256::ZERO);
-        *balance = balance.saturating_add(amount);
-    }
-
-    /// Withdraw ETH
-    pub fn withdraw(&mut self, address: Address, amount: U256) -> Result<(), String> {
-        let balance = self.balances.entry(address).or_insert(U256::ZERO);
-
-        if *balance < amount {
-            return Err(format!("Insufficient balance: have {}, want {}", balance, amount));
-        }
-
-        *balance = balance.saturating_sub(amount);
-        Ok(())
-    }
-
-    /// Get balance
-    pub fn get_balance(&self, address: &Address) -> U256 {
-        self.balances.get(address).copied().unwrap_or(U256::ZERO)
-    }
-}
-
-/// Precompile executor
+/// Precompile executor for counter operations
 #[derive(Debug, Default)]
-pub struct PrecompileExecutor {
-    state: PrecompileState,
-}
+pub struct PrecompileExecutor;
 
 impl PrecompileExecutor {
     /// Create new executor
     pub fn new() -> Self {
-        Self { state: PrecompileState::new() }
+        Self
     }
 
-    /// Execute precompile call
-    pub fn execute(
-        &mut self,
+    /// Execute precompile call with DexVM state for counter operations
+    pub fn execute_with_dexvm(
+        &self,
         caller: Address,
         to: Address,
         input: &[u8],
-        value: U256,
+        dexvm_state: Option<&mut DexVmState>,
     ) -> Result<PrecompileResult, BlockExecutionError> {
-        if to != DEPOSIT_PRECOMPILE_ADDRESS {
+        if to != COUNTER_PRECOMPILE_ADDRESS {
             return Err(BlockExecutionError::msg(format!("Unknown precompile address: {:?}", to)));
         }
 
-        let operation = self.parse_operation(input, value);
+        let operation = Self::parse_operation(input);
 
         match operation {
-            PrecompileOperation::Deposit => {
-                if value.is_zero() {
-                    return Ok(PrecompileResult {
-                        success: false,
-                        return_data: vec![],
-                        gas_used: 5000,
-                        error: Some("Deposit amount must be greater than 0".to_string()),
-                    });
-                }
+            PrecompileOperation::IncrementCounter(amount) => {
+                let dexvm = dexvm_state.ok_or_else(|| {
+                    BlockExecutionError::msg("DexVM state required for counter operations")
+                })?;
 
-                self.state.deposit(caller, value);
+                let new_value = dexvm.increment_counter(caller, amount);
+                tracing::debug!(
+                    "Counter increment: address={}, amount={}, new_value={}",
+                    caller,
+                    amount,
+                    new_value
+                );
 
                 Ok(PrecompileResult {
                     success: true,
+                    return_data: new_value.to_be_bytes().to_vec(),
+                    gas_used: COUNTER_INCREMENT_GAS,
+                    error: None,
+                })
+            }
+            PrecompileOperation::DecrementCounter(amount) => {
+                let dexvm = dexvm_state.ok_or_else(|| {
+                    BlockExecutionError::msg("DexVM state required for counter operations")
+                })?;
+
+                match dexvm.decrement_counter(caller, amount) {
+                    Ok(new_value) => {
+                        tracing::debug!(
+                            "Counter decrement: address={}, amount={}, new_value={}",
+                            caller,
+                            amount,
+                            new_value
+                        );
+                        Ok(PrecompileResult {
+                            success: true,
+                            return_data: new_value.to_be_bytes().to_vec(),
+                            gas_used: COUNTER_DECREMENT_GAS,
+                            error: None,
+                        })
+                    }
+                    Err(err) => {
+                        tracing::warn!("Counter decrement failed: address={}, error={}", caller, err);
+                        Ok(PrecompileResult {
+                            success: false,
+                            return_data: vec![],
+                            gas_used: COUNTER_DECREMENT_GAS,
+                            error: Some(err),
+                        })
+                    }
+                }
+            }
+            PrecompileOperation::QueryCounter => {
+                let dexvm = dexvm_state.ok_or_else(|| {
+                    BlockExecutionError::msg("DexVM state required for counter operations")
+                })?;
+
+                let value = dexvm.get_counter(&caller);
+                tracing::debug!("Counter query: address={}, value={}", caller, value);
+
+                Ok(PrecompileResult {
+                    success: true,
+                    return_data: value.to_be_bytes().to_vec(),
+                    gas_used: COUNTER_QUERY_GAS,
+                    error: None,
+                })
+            }
+            PrecompileOperation::Invalid => {
+                Ok(PrecompileResult {
+                    success: false,
                     return_data: vec![],
-                    gas_used: 20000,
-                    error: None,
-                })
-            }
-            PrecompileOperation::Withdraw => {
-                if input.len() < 32 {
-                    return Ok(PrecompileResult {
-                        success: false,
-                        return_data: vec![],
-                        gas_used: 5000,
-                        error: Some("Invalid withdraw calldata".to_string()),
-                    });
-                }
-
-                let amount = U256::from_be_slice(&input[0..32]);
-
-                match self.state.withdraw(caller, amount) {
-                    Ok(()) => Ok(PrecompileResult {
-                        success: true,
-                        return_data: vec![],
-                        gas_used: 20000,
-                        error: None,
-                    }),
-                    Err(err) => Ok(PrecompileResult {
-                        success: false,
-                        return_data: vec![],
-                        gas_used: 20000,
-                        error: Some(err),
-                    }),
-                }
-            }
-            PrecompileOperation::GetBalance => {
-                let balance = self.state.get_balance(&caller);
-                let balance_bytes = balance.to_be_bytes::<32>();
-
-                Ok(PrecompileResult {
-                    success: true,
-                    return_data: balance_bytes.to_vec(),
-                    gas_used: 5000,
-                    error: None,
+                    gas_used: 3000,
+                    error: Some("Invalid counter operation".to_string()),
                 })
             }
         }
     }
 
-    fn parse_operation(&self, input: &[u8], value: U256) -> PrecompileOperation {
-        if !value.is_zero() {
-            return PrecompileOperation::Deposit;
+    /// Parse calldata to determine operation type
+    ///
+    /// Counter operation format: [op: 1 byte][amount: 8 bytes big-endian]
+    /// - op = 0x00 → Increment
+    /// - op = 0x01 → Decrement
+    /// - op = 0x02 → Query
+    fn parse_operation(input: &[u8]) -> PrecompileOperation {
+        if input.len() != 9 {
+            return PrecompileOperation::Invalid;
         }
 
-        if input.is_empty() || input.iter().all(|&b| b == 0) {
-            return PrecompileOperation::GetBalance;
+        let op = input[0];
+        let amount = u64::from_be_bytes(input[1..9].try_into().unwrap());
+
+        match op {
+            OP_INCREMENT => PrecompileOperation::IncrementCounter(amount),
+            OP_DECREMENT => PrecompileOperation::DecrementCounter(amount),
+            OP_QUERY => PrecompileOperation::QueryCounter,
+            _ => PrecompileOperation::Invalid,
         }
-
-        PrecompileOperation::Withdraw
-    }
-
-    /// Get state reference
-    pub fn state(&self) -> &PrecompileState {
-        &self.state
-    }
-
-    /// Get mutable state reference
-    pub fn state_mut(&mut self) -> &mut PrecompileState {
-        &mut self.state
     }
 }
 
@@ -184,78 +172,114 @@ mod tests {
     use super::*;
     use alloy_primitives::address;
 
-    #[test]
-    fn test_deposit() {
-        let mut executor = PrecompileExecutor::new();
-        let caller = address!("1111111111111111111111111111111111111111");
-        let amount = U256::from(1000);
-
-        let result = executor.execute(caller, DEPOSIT_PRECOMPILE_ADDRESS, &[], amount).unwrap();
-
-        assert!(result.success);
-        assert_eq!(result.gas_used, 20000);
-        assert_eq!(executor.state().get_balance(&caller), amount);
+    // Helper to create counter operation calldata
+    fn make_counter_calldata(op: u8, amount: u64) -> Vec<u8> {
+        let mut data = vec![op];
+        data.extend_from_slice(&amount.to_be_bytes());
+        data
     }
 
     #[test]
-    fn test_deposit_zero_is_query() {
-        let mut executor = PrecompileExecutor::new();
-        let caller = address!("2222222222222222222222222222222222222222");
+    fn test_counter_increment() {
+        let executor = PrecompileExecutor::new();
+        let mut dexvm_state = DexVmState::new();
+        let caller = address!("6666666666666666666666666666666666666666");
 
-        let result = executor.execute(caller, DEPOSIT_PRECOMPILE_ADDRESS, &[], U256::ZERO).unwrap();
+        let calldata = make_counter_calldata(OP_INCREMENT, 10);
+        let result = executor
+            .execute_with_dexvm(caller, COUNTER_PRECOMPILE_ADDRESS, &calldata, Some(&mut dexvm_state))
+            .unwrap();
 
         assert!(result.success);
-        assert_eq!(result.gas_used, 5000);
-        assert_eq!(result.return_data.len(), 32);
+        assert_eq!(result.gas_used, COUNTER_INCREMENT_GAS);
+
+        let new_value = u64::from_be_bytes(result.return_data.try_into().unwrap());
+        assert_eq!(new_value, 10);
+        assert_eq!(dexvm_state.get_counter(&caller), 10);
     }
 
     #[test]
-    fn test_withdraw_success() {
-        let mut executor = PrecompileExecutor::new();
-        let caller = address!("3333333333333333333333333333333333333333");
+    fn test_counter_decrement() {
+        let executor = PrecompileExecutor::new();
+        let mut dexvm_state = DexVmState::new();
+        let caller = address!("7777777777777777777777777777777777777777");
 
-        // First deposit
-        executor.state_mut().deposit(caller, U256::from(1000));
+        dexvm_state.set_counter(caller, 100);
 
-        // Withdraw 500
-        let calldata = U256::from(500).to_be_bytes::<32>().to_vec();
-        let result =
-            executor.execute(caller, DEPOSIT_PRECOMPILE_ADDRESS, &calldata, U256::ZERO).unwrap();
+        let calldata = make_counter_calldata(OP_DECREMENT, 30);
+        let result = executor
+            .execute_with_dexvm(caller, COUNTER_PRECOMPILE_ADDRESS, &calldata, Some(&mut dexvm_state))
+            .unwrap();
 
         assert!(result.success);
-        assert_eq!(executor.state().get_balance(&caller), U256::from(500));
+        assert_eq!(result.gas_used, COUNTER_DECREMENT_GAS);
+
+        let new_value = u64::from_be_bytes(result.return_data.try_into().unwrap());
+        assert_eq!(new_value, 70);
+        assert_eq!(dexvm_state.get_counter(&caller), 70);
     }
 
     #[test]
-    fn test_withdraw_insufficient_balance() {
-        let mut executor = PrecompileExecutor::new();
-        let caller = address!("4444444444444444444444444444444444444444");
+    fn test_counter_decrement_underflow() {
+        let executor = PrecompileExecutor::new();
+        let mut dexvm_state = DexVmState::new();
+        let caller = address!("8888888888888888888888888888888888888888");
 
-        executor.state_mut().deposit(caller, U256::from(100));
+        dexvm_state.set_counter(caller, 10);
 
-        let calldata = U256::from(500).to_be_bytes::<32>().to_vec();
-        let result =
-            executor.execute(caller, DEPOSIT_PRECOMPILE_ADDRESS, &calldata, U256::ZERO).unwrap();
+        let calldata = make_counter_calldata(OP_DECREMENT, 100);
+        let result = executor
+            .execute_with_dexvm(caller, COUNTER_PRECOMPILE_ADDRESS, &calldata, Some(&mut dexvm_state))
+            .unwrap();
 
         assert!(!result.success);
         assert!(result.error.is_some());
-        assert_eq!(executor.state().get_balance(&caller), U256::from(100));
+        assert_eq!(dexvm_state.get_counter(&caller), 10);
     }
 
     #[test]
-    fn test_get_balance() {
-        let mut executor = PrecompileExecutor::new();
-        let caller = address!("5555555555555555555555555555555555555555");
+    fn test_counter_query() {
+        let executor = PrecompileExecutor::new();
+        let mut dexvm_state = DexVmState::new();
+        let caller = address!("9999999999999999999999999999999999999999");
 
-        executor.state_mut().deposit(caller, U256::from(1000));
+        dexvm_state.set_counter(caller, 42);
 
-        let result = executor.execute(caller, DEPOSIT_PRECOMPILE_ADDRESS, &[], U256::ZERO).unwrap();
+        let calldata = make_counter_calldata(OP_QUERY, 0);
+        let result = executor
+            .execute_with_dexvm(caller, COUNTER_PRECOMPILE_ADDRESS, &calldata, Some(&mut dexvm_state))
+            .unwrap();
 
         assert!(result.success);
-        assert_eq!(result.gas_used, 5000);
-        assert_eq!(result.return_data.len(), 32);
+        assert_eq!(result.gas_used, COUNTER_QUERY_GAS);
 
-        let balance = U256::from_be_slice(&result.return_data);
-        assert_eq!(balance, U256::from(1000));
+        let value = u64::from_be_bytes(result.return_data.try_into().unwrap());
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn test_invalid_operation() {
+        let executor = PrecompileExecutor::new();
+        let mut dexvm_state = DexVmState::new();
+        let caller = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+        // Invalid calldata (wrong length)
+        let result = executor
+            .execute_with_dexvm(caller, COUNTER_PRECOMPILE_ADDRESS, &[0x00], Some(&mut dexvm_state))
+            .unwrap();
+
+        assert!(!result.success);
+        assert!(result.error.is_some());
+    }
+
+    #[test]
+    fn test_counter_operation_without_dexvm_state() {
+        let executor = PrecompileExecutor::new();
+        let caller = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+        let calldata = make_counter_calldata(OP_INCREMENT, 10);
+        let result = executor.execute_with_dexvm(caller, COUNTER_PRECOMPILE_ADDRESS, &calldata, None);
+
+        assert!(result.is_err());
     }
 }

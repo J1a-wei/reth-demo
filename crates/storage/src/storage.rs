@@ -16,9 +16,9 @@ pub struct DualvmStorage {
     /// Database environment
     pub db: Arc<DatabaseEnv>,
     /// Block store
-    pub blocks: BlockStore,
+    pub blocks: Arc<BlockStore>,
     /// State store
-    pub state: StateStore,
+    pub state: Arc<StateStore>,
     /// Whether this is a new database
     is_new: AtomicBool,
 }
@@ -40,8 +40,8 @@ impl DualvmStorage {
         )?;
         let db = Arc::new(db);
 
-        let blocks = BlockStore::new(Arc::clone(&db))?;
-        let state = StateStore::new(Arc::clone(&db));
+        let blocks = Arc::new(BlockStore::new(Arc::clone(&db))?);
+        let state = Arc::new(StateStore::new(Arc::clone(&db)));
 
         Ok(Self { db, blocks, state, is_new: AtomicBool::new(is_new) })
     }

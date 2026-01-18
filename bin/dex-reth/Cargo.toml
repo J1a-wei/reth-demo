@@ -12,12 +12,18 @@ path = "src/main.rs"
 # Internal
 dex-node = { workspace = true }
 dex-p2p = { workspace = true }
+dex-rpc = { workspace = true }
+dex-storage = { workspace = true }
 
 # Primitives
 alloy-primitives = { workspace = true }
+alloy-rlp = { workspace = true }
+alloy-consensus = { workspace = true }
 
 # Reth
 reth-network-peers = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+reth-primitives-traits = { workspace = true }
 
 # Async
 tokio = { workspace = true }
@@ -35,3 +41,6 @@ clap = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# Data
+bytes = { workspace = true }

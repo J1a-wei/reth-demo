@@ -34,13 +34,9 @@ serde_json = { workspace = true }
 
 # Error handling
 eyre = { workspace = true }
-thiserror = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
-
-# Hex encoding
-hex = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true }

@@ -34,5 +34,9 @@ tracing = { workspace = true }
 # JSON-RPC
 jsonrpsee = { workspace = true }
 
+# Crypto
+secp256k1 = { version = "0.30", features = ["global-context", "recovery"] }
+hex = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }

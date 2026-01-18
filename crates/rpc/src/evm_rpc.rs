@@ -1,7 +1,7 @@
 //! EVM JSON-RPC service
 
 use alloy_consensus::{transaction::SignerRecoverable, Transaction};
-use alloy_primitives::{Address, Bytes, B256, U256, U64};
+use alloy_primitives::{Address, Bytes, B256, B64, U256, U64};
 use alloy_rlp::Decodable;
 use dex_storage::{BlockStore, StateStore, StoredBlock};
 use jsonrpsee::{
@@ -16,6 +16,7 @@ use std::{
     net::SocketAddr,
     sync::{Arc, RwLock},
 };
+use tokio::sync::mpsc;
 
 /// Transaction request
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,7 +45,10 @@ pub struct TransactionReceipt {
     pub gas_used: U64,
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
+    pub logs_bloom: Bytes,
     pub status: U64,
+    #[serde(rename = "type")]
+    pub tx_type: U64,
 }
 
 /// Log entry
@@ -61,20 +65,50 @@ pub struct Log {
     pub log_index: U64,
 }
 
-/// Block info
+/// Block info - compatible with Ethereum RPC format
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockInfo {
     pub number: U64,
     pub hash: B256,
     pub parent_hash: B256,
-    pub timestamp: U64,
+    pub sha3_uncles: B256,
+    pub logs_bloom: Bytes,
+    pub transactions_root: B256,
+    pub state_root: B256,
+    pub receipts_root: B256,
+    pub miner: Address,
+    pub difficulty: U256,
+    pub total_difficulty: U256,
+    pub extra_data: Bytes,
+    pub size: U64,
     pub gas_limit: U64,
     pub gas_used: U64,
-    pub miner: Address,
-    pub state_root: B256,
+    pub timestamp: U64,
     pub transactions: Vec<B256>,
+    pub uncles: Vec<B256>,
+    pub nonce: B64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_fee_per_gas: Option<U256>,
 }
+
+/// Empty uncles hash (keccak256 of RLP empty list)
+const EMPTY_OMMER_ROOT: B256 = B256::new([
+    0x1d, 0xcc, 0x4d, 0xe8, 0xde, 0xc7, 0x5d, 0x7a, 0xab, 0x85, 0xb5, 0x67, 0xb6, 0xcc, 0xd4, 0x1a,
+    0xd3, 0x12, 0x45, 0x1b, 0x94, 0x8a, 0x74, 0x13, 0xf0, 0xa1, 0x42, 0xfd, 0x40, 0xd4, 0x93, 0x47,
+]);
+
+/// Empty transactions root (keccak256 of RLP empty list)
+const EMPTY_TX_ROOT: B256 = B256::new([
+    0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
+    0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
+]);
+
+/// Empty receipts root (keccak256 of RLP empty list)
+const EMPTY_RECEIPTS_ROOT: B256 = B256::new([
+    0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
+    0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
+]);
 
 impl From<StoredBlock> for BlockInfo {
     fn from(block: StoredBlock) -> Self {
@@ -82,12 +116,28 @@ impl From<StoredBlock> for BlockInfo {
             number: U64::from(block.number),
             hash: block.hash,
             parent_hash: block.parent_hash,
-            timestamp: U64::from(block.timestamp),
+            sha3_uncles: EMPTY_OMMER_ROOT,
+            logs_bloom: Bytes::from(vec![0u8; 256]),
+            transactions_root: if block.transaction_hashes.is_empty() {
+                EMPTY_TX_ROOT
+            } else {
+                // Simplified: just use the state root as a placeholder
+                block.combined_state_root
+            },
+            state_root: block.combined_state_root,
+            receipts_root: EMPTY_RECEIPTS_ROOT,
+            miner: block.miner,
+            difficulty: U256::from(1),
+            total_difficulty: U256::from(block.number + 1),
+            extra_data: Bytes::default(),
+            size: U64::from(1000), // Placeholder size
             gas_limit: U64::from(block.gas_limit),
             gas_used: U64::from(block.gas_used),
-            miner: block.miner,
-            state_root: block.combined_state_root,
+            timestamp: U64::from(block.timestamp),
             transactions: block.transaction_hashes,
+            uncles: vec![],
+            nonce: B64::ZERO,
+            base_fee_per_gas: Some(U256::from(1_000_000_000u64)), // 1 gwei
         }
     }
 }
@@ -193,6 +243,8 @@ pub struct EvmRpcServer {
     block_store: Arc<BlockStore>,
     pending_txs: Arc<RwLock<Vec<PendingTransaction>>>,
     receipts: Arc<RwLock<HashMap<B256, TransactionReceipt>>>,
+    /// Optional channel for broadcasting transactions via P2P
+    tx_broadcast_sender: Arc<RwLock<Option<mpsc::Sender<Vec<u8>>>>>,
 }
 
 impl EvmRpcServer {
@@ -203,67 +255,21 @@ impl EvmRpcServer {
             block_store,
             pending_txs: Arc::new(RwLock::new(Vec::new())),
             receipts: Arc::new(RwLock::new(HashMap::new())),
+            tx_broadcast_sender: Arc::new(RwLock::new(None)),
         }
     }
 
-    fn execute_simple_tx(
-        &self,
-        tx: &TransactionSigned,
-        caller: Address,
-    ) -> eyre::Result<(bool, u64, Option<Address>)> {
-        let caller_balance = self.state_store.get_balance(&caller);
-        let caller_nonce = self.state_store.get_nonce(&caller);
+    /// Set the transaction broadcast channel for P2P propagation
+    pub fn set_tx_broadcast_sender(&self, sender: mpsc::Sender<Vec<u8>>) {
+        *self.tx_broadcast_sender.write().unwrap() = Some(sender);
+    }
 
-        if tx.nonce() < caller_nonce {
-            return Err(eyre::eyre!("nonce too low"));
+    /// Broadcast a transaction via P2P (if sender is configured)
+    fn broadcast_transaction(&self, tx_rlp: Vec<u8>) {
+        if let Some(sender) = self.tx_broadcast_sender.read().unwrap().as_ref() {
+            // Use try_send to avoid blocking - if the channel is full, we'll skip
+            let _ = sender.try_send(tx_rlp);
         }
-
-        let tx_value = tx.value();
-        let gas_price = U256::from(tx.effective_gas_price(None));
-        let gas_limit = tx.gas_limit();
-        let max_gas_cost = gas_price * U256::from(gas_limit);
-        let total_cost = tx_value + max_gas_cost;
-
-        if caller_balance < total_cost {
-            return Err(eyre::eyre!("insufficient balance"));
-        }
-
-        let base_gas = 21000u64;
-        let data_gas = tx.input().len() as u64 * 16;
-        let mut gas_used = base_gas + data_gas;
-
-        let contract_address = match tx.to() {
-            Some(to) => {
-                let to_balance = self.state_store.get_balance(&to);
-                let _ = self.state_store.set_balance(to, to_balance + tx_value);
-
-                if self.state_store.get_code(&to).is_some() {
-                    gas_used += 10000;
-                }
-                None
-            }
-            None => {
-                use alloy_primitives::keccak256;
-
-                let mut data = Vec::new();
-                data.extend_from_slice(caller.as_slice());
-                data.extend_from_slice(&caller_nonce.to_be_bytes());
-                let contract_addr = Address::from_slice(&keccak256(&data)[12..]);
-
-                let code = tx.input().clone();
-                gas_used += code.len() as u64 * 200;
-                let _ = self.state_store.set_code(contract_addr, code);
-                let _ = self.state_store.set_balance(contract_addr, tx_value);
-
-                Some(contract_addr)
-            }
-        };
-
-        let gas_cost = gas_price * U256::from(gas_used);
-        let _ = self.state_store.set_balance(caller, caller_balance - tx_value - gas_cost);
-        let _ = self.state_store.increment_nonce(caller);
-
-        Ok((true, gas_used, contract_address))
     }
 
     pub fn get_pending_transactions(&self) -> Vec<PendingTransaction> {
@@ -276,6 +282,27 @@ impl EvmRpcServer {
 
     pub fn add_receipt(&self, hash: B256, receipt: TransactionReceipt) {
         self.receipts.write().unwrap().insert(hash, receipt);
+    }
+
+    /// Add a pending transaction from P2P (without validation)
+    /// Returns true if the transaction was added, false if it already exists
+    pub fn add_pending_transaction_from_p2p(&self, tx: TransactionSigned) -> bool {
+        let hash = *tx.tx_hash();
+        let mut pending = self.pending_txs.write().unwrap();
+
+        // Check if transaction already exists
+        if pending.iter().any(|p| p.hash == hash) {
+            return false;
+        }
+
+        // Recover sender address
+        let from = match tx.recover_signer() {
+            Ok(addr) => addr,
+            Err(_) => return false,
+        };
+
+        pending.push(PendingTransaction { tx, hash, from });
+        true
     }
 }
 
@@ -336,38 +363,44 @@ impl EthApiServer for EvmRpcServer {
 
         tracing::info!("Received transaction {} from {}", tx_hash, caller);
 
-        let (success, gas_used, contract_address) =
-            self.execute_simple_tx(&tx, caller).map_err(|e| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    -32000,
-                    format!("Transaction execution failed: {}", e),
-                    None::<()>,
-                )
-            })?;
+        // Basic validation (don't execute yet - execution happens during block production)
+        let caller_balance = self.state_store.get_balance(&caller);
+        let caller_nonce = self.state_store.get_nonce(&caller);
 
-        let receipt = TransactionReceipt {
-            transaction_hash: tx_hash,
-            transaction_index: U64::from(0),
-            block_hash: B256::ZERO,
-            block_number: U64::from(self.block_store.latest_block_number() + 1),
-            from: caller,
-            to: tx.to(),
-            cumulative_gas_used: U64::from(gas_used),
-            gas_used: U64::from(gas_used),
-            contract_address,
-            logs: vec![],
-            status: if success { U64::from(1) } else { U64::from(0) },
-        };
+        // Check nonce
+        if tx.nonce() < caller_nonce {
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                -32000,
+                format!("Nonce too low: expected {}, got {}", caller_nonce, tx.nonce()),
+                None::<()>,
+            ));
+        }
 
-        self.add_receipt(tx_hash, receipt);
+        // Check balance (rough estimate)
+        let tx_value = tx.value();
+        let gas_price = U256::from(tx.effective_gas_price(None));
+        let gas_limit = tx.gas_limit();
+        let max_gas_cost = gas_price * U256::from(gas_limit);
+        let total_cost = tx_value + max_gas_cost;
 
+        if caller_balance < total_cost {
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                -32000,
+                format!("Insufficient balance: have {}, need {}", caller_balance, total_cost),
+                None::<()>,
+            ));
+        }
+
+        // Add to pending transactions (will be executed during block production)
         self.pending_txs.write().unwrap().push(PendingTransaction { tx, hash: tx_hash, from: caller });
 
+        // Broadcast transaction to P2P network (for fullnode mode)
+        self.broadcast_transaction(data.to_vec());
+
         tracing::info!(
-            "Transaction {} executed: success={}, gas_used={}",
+            "Transaction {} added to mempool from {}",
             tx_hash,
-            success,
-            gas_used
+            caller
         );
 
         Ok(tx_hash)
@@ -494,6 +527,7 @@ impl Clone for EvmRpcServer {
             block_store: Arc::clone(&self.block_store),
             pending_txs: Arc::clone(&self.pending_txs),
             receipts: Arc::clone(&self.receipts),
+            tx_broadcast_sender: Arc::clone(&self.tx_broadcast_sender),
         }
     }
 }

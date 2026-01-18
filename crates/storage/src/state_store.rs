@@ -358,6 +358,34 @@ impl StateStore {
 
         result
     }
+
+    /// Get all counters (for DexVM state recovery)
+    pub fn all_counters(&self) -> HashMap<Address, u64> {
+        let mut result = HashMap::new();
+
+        let tx = match self.db.tx() {
+            Ok(tx) => tx,
+            Err(_) => return result,
+        };
+
+        let mut cursor = match tx.cursor_read::<DualvmCounters>() {
+            Ok(cursor) => cursor,
+            Err(_) => return result,
+        };
+
+        let walker = match cursor.walk(None) {
+            Ok(walker) => walker,
+            Err(_) => return result,
+        };
+
+        for entry in walker {
+            if let Ok((addr, stored)) = entry {
+                result.insert(addr, stored.value);
+            }
+        }
+
+        result
+    }
 }
 
 #[cfg(test)]

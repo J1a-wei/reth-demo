@@ -7,12 +7,19 @@ license.workspace = true
 [dependencies]
 # Reth P2P
 reth-network-peers = { workspace = true }
+reth-eth-wire = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }
 reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }
 reth-ecies = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }
 
 # Primitives
-alloy-primitives = { workspace = true }
+alloy-primitives = { workspace = true, features = ["rand"] }
 alloy-rlp = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-chains = "0.2"
+alloy-hardforks = "0.4"
+
+# Reth primitives
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }
 
 # Crypto
 secp256k1 = { version = "0.30", features = ["global-context", "recovery", "rand"] }
@@ -20,7 +27,9 @@ secp256k1 = { version = "0.30", features = ["global-context", "recovery", "rand"
 # Async
 tokio = { workspace = true }
 tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["codec"] }
 futures = "0.3"
+pin-project = "1.0"
 
 # Serialization
 serde = { workspace = true }

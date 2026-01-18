@@ -4,7 +4,34 @@ use alloy_primitives::{Address, BlockNumber, B256, U256};
 use bytes::BufMut;
 use reth_codecs::Compact;
 use reth_db_api::table::{Compress, Decompress, Decode, Encode, Table, TableInfo};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+/// Helper module for serializing [u8; 65] as hex string
+mod signature_serde {
+    use super::*;
+
+    pub fn serialize<S>(bytes: &[u8; 65], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let hex_string = hex::encode(bytes);
+        serializer.serialize_str(&hex_string)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 65], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: String = Deserialize::deserialize(deserializer)?;
+        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+        if bytes.len() != 65 {
+            return Err(serde::de::Error::custom("signature must be 65 bytes"));
+        }
+        let mut arr = [0u8; 65];
+        arr.copy_from_slice(&bytes);
+        Ok(arr)
+    }
+}
 
 /// Table name constants
 pub mod table_names {
@@ -13,6 +40,7 @@ pub mod table_names {
     pub const DUALVM_COUNTERS: &str = "DualvmCounters";
     pub const DUALVM_STORAGE: &str = "DualvmStorage";
     pub const DUALVM_TX_HASHES: &str = "DualvmTxHashes";
+    pub const DUALVM_TRANSACTIONS: &str = "DualvmTransactions";
 }
 
 /// Storage key combining address and slot
@@ -45,7 +73,7 @@ impl Decode for StorageKey {
 }
 
 /// DualVM block header stored in database
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredDualvmBlock {
     pub hash: B256,
     pub parent_hash: B256,
@@ -57,6 +85,35 @@ pub struct StoredDualvmBlock {
     pub dexvm_state_root: B256,
     pub combined_state_root: B256,
     pub transaction_count: u64,
+    /// Block signature (65 bytes: r[32] + s[32] + v[1])
+    #[serde(with = "signature_serde", default = "default_signature")]
+    pub signature: [u8; 65],
+    /// Transaction hashes included in this block
+    #[serde(default)]
+    pub transaction_hashes: Vec<B256>,
+}
+
+fn default_signature() -> [u8; 65] {
+    [0u8; 65]
+}
+
+impl Default for StoredDualvmBlock {
+    fn default() -> Self {
+        Self {
+            hash: B256::default(),
+            parent_hash: B256::default(),
+            timestamp: 0,
+            gas_limit: 0,
+            gas_used: 0,
+            miner: Address::default(),
+            evm_state_root: B256::default(),
+            dexvm_state_root: B256::default(),
+            combined_state_root: B256::default(),
+            transaction_count: 0,
+            signature: [0u8; 65],
+            transaction_hashes: vec![],
+        }
+    }
 }
 
 impl Compact for StoredDualvmBlock {
@@ -74,7 +131,13 @@ impl Compact for StoredDualvmBlock {
         buf.put_slice(self.dexvm_state_root.as_slice());
         buf.put_slice(self.combined_state_root.as_slice());
         buf.put_u64(self.transaction_count);
-        180
+        buf.put_slice(&self.signature);
+        // Write transaction hashes count and data
+        buf.put_u32(self.transaction_hashes.len() as u32);
+        for tx_hash in &self.transaction_hashes {
+            buf.put_slice(tx_hash.as_slice());
+        }
+        245 + 4 + self.transaction_hashes.len() * 32
     }
 
     fn from_compact(buf: &[u8], _len: usize) -> (Self, &[u8]) {
@@ -88,6 +151,28 @@ impl Compact for StoredDualvmBlock {
         let dexvm_state_root = B256::from_slice(&buf[140..172]);
         let combined_state_root = B256::from_slice(&buf[172..204]);
         let transaction_count = u64::from_be_bytes(buf[204..212].try_into().unwrap());
+        let mut signature = [0u8; 65];
+        let mut transaction_hashes = vec![];
+        let mut remaining = &buf[212..];
+
+        // Handle old blocks without signature (backwards compatibility)
+        if buf.len() >= 277 {
+            signature.copy_from_slice(&buf[212..277]);
+            remaining = &buf[277..];
+
+            // Read transaction hashes if present (new format)
+            if remaining.len() >= 4 {
+                let tx_count = u32::from_be_bytes(remaining[0..4].try_into().unwrap()) as usize;
+                remaining = &remaining[4..];
+
+                for _ in 0..tx_count {
+                    if remaining.len() >= 32 {
+                        transaction_hashes.push(B256::from_slice(&remaining[0..32]));
+                        remaining = &remaining[32..];
+                    }
+                }
+            }
+        }
 
         (
             Self {
@@ -101,8 +186,10 @@ impl Compact for StoredDualvmBlock {
                 dexvm_state_root,
                 combined_state_root,
                 transaction_count,
+                signature,
+                transaction_hashes,
             },
-            &buf[212..],
+            remaining,
         )
     }
 }
@@ -117,6 +204,7 @@ impl Compress for StoredDualvmBlock {
 
 impl Decompress for StoredDualvmBlock {
     fn decompress(value: &[u8]) -> Result<Self, reth_db_api::DatabaseError> {
+        // Accept both old format (212 bytes) and new format (277 bytes)
         if value.len() < 212 {
             return Err(reth_db_api::DatabaseError::Decode);
         }
@@ -257,6 +345,49 @@ impl Decompress for StoredStorageValue {
 pub struct StoredTxInfo {
     pub block_number: BlockNumber,
     pub tx_index: u64,
+}
+
+/// Full transaction data stored for block body retrieval
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct StoredTransaction {
+    /// RLP-encoded transaction bytes
+    pub rlp_bytes: Vec<u8>,
+}
+
+impl Compact for StoredTransaction {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: BufMut + AsMut<[u8]>,
+    {
+        let len = self.rlp_bytes.len();
+        buf.put_u32(len as u32);
+        buf.put_slice(&self.rlp_bytes);
+        4 + len
+    }
+
+    fn from_compact(buf: &[u8], _len: usize) -> (Self, &[u8]) {
+        let data_len = u32::from_be_bytes(buf[0..4].try_into().unwrap()) as usize;
+        let rlp_bytes = buf[4..4 + data_len].to_vec();
+        (Self { rlp_bytes }, &buf[4 + data_len..])
+    }
+}
+
+impl Compress for StoredTransaction {
+    type Compressed = Vec<u8>;
+
+    fn compress_to_buf<B: BufMut + AsMut<[u8]>>(&self, buf: &mut B) {
+        self.to_compact(buf);
+    }
+}
+
+impl Decompress for StoredTransaction {
+    fn decompress(value: &[u8]) -> Result<Self, reth_db_api::DatabaseError> {
+        if value.len() < 4 {
+            return Err(reth_db_api::DatabaseError::Decode);
+        }
+        let (tx, _) = Self::from_compact(value, value.len());
+        Ok(tx)
+    }
 }
 
 impl Compact for StoredTxInfo {
@@ -401,6 +532,27 @@ impl TableInfo for DualvmTxHashes {
     }
 }
 
+/// DualVM transactions table: B256 (tx_hash) -> StoredTransaction
+#[derive(Debug)]
+pub struct DualvmTransactions;
+
+impl Table for DualvmTransactions {
+    const NAME: &'static str = table_names::DUALVM_TRANSACTIONS;
+    const DUPSORT: bool = false;
+    type Key = B256;
+    type Value = StoredTransaction;
+}
+
+impl TableInfo for DualvmTransactions {
+    fn name(&self) -> &'static str {
+        Self::NAME
+    }
+
+    fn is_dupsort(&self) -> bool {
+        Self::DUPSORT
+    }
+}
+
 /// TableSet implementation for DualVM tables
 pub struct DualvmTableSet;
 
@@ -413,6 +565,7 @@ impl reth_db_api::TableSet for DualvmTableSet {
                 Box::new(DualvmCounters) as Box<dyn TableInfo>,
                 Box::new(DualvmStorage) as Box<dyn TableInfo>,
                 Box::new(DualvmTxHashes) as Box<dyn TableInfo>,
+                Box::new(DualvmTransactions) as Box<dyn TableInfo>,
             ]
             .into_iter(),
         )

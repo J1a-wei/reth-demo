@@ -3,7 +3,6 @@ members = [
     "crates/primitives",
     "crates/dexvm",
     "crates/storage",
-    "crates/evm",
     "crates/rpc",
     "crates/node",
     "crates/p2p",
@@ -22,13 +21,9 @@ rust-version = "1.84"
 dex-primitives = { path = "crates/primitives" }
 dex-dexvm = { path = "crates/dexvm" }
 dex-storage = { path = "crates/storage" }
-dex-evm = { path = "crates/evm" }
 dex-rpc = { path = "crates/rpc" }
 dex-node = { path = "crates/node" }
 dex-p2p = { path = "crates/p2p" }
-
-# Revm
-revm = { version = "27", default-features = false, features = ["std"] }
 
 # Reth dependencies
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.5.1" }

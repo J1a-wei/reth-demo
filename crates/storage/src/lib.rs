@@ -12,5 +12,5 @@ pub use state_store::{AccountState, StateStore};
 pub use storage::DualvmStorage;
 pub use tables::{
     DualvmAccounts, DualvmBlocks, DualvmCounters, DualvmStorage as DualvmStorageTable,
-    DualvmTableSet, DualvmTxHashes,
+    DualvmTableSet, DualvmTransactions, DualvmTxHashes, StoredTransaction,
 };

@@ -79,9 +79,22 @@ impl DexVmExecutor {
         &self.pending_state
     }
 
+    /// Get mutable pending state reference (for cross-VM calls)
+    pub fn pending_state_mut(&mut self) -> &mut DexVmState {
+        self.has_pending = true;
+        &mut self.pending_state
+    }
+
     /// Get state root (from committed state)
     pub fn state_root(&self) -> alloy_primitives::B256 {
         self.state.state_root()
+    }
+
+    /// Sync pending state to committed state
+    /// Call this after cross-VM operations to persist changes
+    pub fn sync_pending_to_state(&mut self) {
+        self.state = self.pending_state.clone();
+        self.has_pending = false;
     }
 
     /// Check if there are pending changes

@@ -19,10 +19,11 @@ combined_root = keccak256(evm_root || dexvm_root)
 
 - 双 VM 执行 (EVM + DexVM)
 - POA (Proof of Authority) 共识
-- MDBX 持久化存储
+- MDBX 持久化存储（EVM 账户 + DexVM 计数器）
 - EVM JSON-RPC (以太坊兼容)
 - DexVM REST API
 - P2P 网络 (eth devp2p 协议)
+- 全节点区块同步
 
 ## 环境要求 / Requirements
 
@@ -105,6 +106,214 @@ cargo run --release --bin dex-reth -- \
 ```bash
 cargo test
 ```
+
+### 三个测试流程 / Three Test Flows
+
+本项目包含三个端到端测试流程，验证双 VM 系统的完整功能：
+
+#### 流程 1: Foundry 部署 PiggyBank 合约 (验证 EVM)
+
+测试 EVM 合约部署、调用、状态存储功能。
+
+**前置条件**:
+- 安装 Foundry: `curl -L https://foundry.paradigm.xyz | bash && foundryup`
+- 节点已启动并使用创世配置
+
+**运行测试**:
+```bash
+./scripts/test_flow1_piggybank.sh
+```
+
+**测试内容**:
+1. 检查节点状态
+2. 部署 PiggyBank.sol 合约
+3. 存款测试 (deposit 1 ETH)
+4. 查询合约余额
+5. 取款测试 (withdraw 0.5 ETH)
+
+**手动测试**:
+```bash
+# 部署合约
+cd contracts
+forge create PiggyBank.sol:PiggyBank \
+    --rpc-url http://127.0.0.1:8545 \
+    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+    --legacy --broadcast
+
+# 存款 1 ETH
+cast send <contract_address> "deposit()" \
+    --value 1ether \
+    --rpc-url http://127.0.0.1:8545 \
+    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+    --legacy
+
+# 查询余额
+cast call <contract_address> "balances(address)" 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
+    --rpc-url http://127.0.0.1:8545
+
+# 取款 0.5 ETH
+cast send <contract_address> "withdraw(uint256)" 500000000000000000 \
+    --rpc-url http://127.0.0.1:8545 \
+    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+    --legacy
+```
+
+---
+
+#### 流程 2: EVM 预编译合约调用 DexVM (跨 VM 调用)
+
+测试通过 EVM 预编译合约 (0x100) 调用 DexVM 计数器，验证跨 VM 调用和原子性回滚。
+
+**预编译合约地址**: `0x0000000000000000000000000000000000000100`
+
+**Calldata 格式**: `[op: 1 byte][amount: 8 bytes big-endian]`
+- `0x00` = Increment (增加计数器)
+- `0x01` = Decrement (减少计数器)
+- `0x02` = Query (查询计数器)
+
+**运行测试**:
+```bash
+./scripts/test_flow2_precompile.sh
+```
+
+**测试内容**:
+1. 检查节点状态
+2. 查询初始 DexVM 计数器
+3. 通过预编译合约增加计数器 (+10)
+4. 查询 DexVM 计数器 (验证跨 VM 状态同步)
+5. 通过预编译合约查询计数器 (eth_call)
+6. 通过预编译合约减少计数器 (-5)
+7. 获取状态根
+
+**手动测试**:
+```bash
+# 增加计数器 +10 (op=0x00, amount=10=0x000000000000000a)
+cast send 0x0000000000000000000000000000000000000100 0x00000000000000000a \
+    --rpc-url http://127.0.0.1:8545 \
+    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+    --legacy
+
+# 减少计数器 -5 (op=0x01, amount=5=0x0000000000000005)
+cast send 0x0000000000000000000000000000000000000100 0x010000000000000005 \
+    --rpc-url http://127.0.0.1:8545 \
+    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+    --legacy
+
+# 查询计数器 (eth_call, op=0x02)
+curl -X POST http://127.0.0.1:8545 \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"eth_call","params":[{"from":"0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266","to":"0x0000000000000000000000000000000000000100","data":"0x020000000000000000"},"latest"],"id":1}'
+
+# 验证 DexVM 状态
+curl http://127.0.0.1:9845/api/v1/counter/0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+```
+
+---
+
+#### 流程 3: DexVM RPC 直接操作计数器
+
+测试 DexVM REST API 独立接口功能。
+
+**运行测试**:
+```bash
+./scripts/test_flow3_dexvm_rpc.sh
+```
+
+**测试内容**:
+1. 健康检查
+2. 查询初始计数器
+3. 增加计数器 (+10)
+4. 增加计数器 (+5)
+5. 减少计数器 (-3)
+6. 查询最终计数器 (预期变化: +12)
+7. 测试减少溢出 (应该失败)
+8. 获取状态根
+9. 测试其他地址
+
+**手动测试**:
+```bash
+# 健康检查
+curl http://127.0.0.1:9845/health
+
+# 查询计数器
+curl http://127.0.0.1:9845/api/v1/counter/0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+
+# 增加计数器
+curl -X POST http://127.0.0.1:9845/api/v1/counter/0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266/increment \
+    -H "Content-Type: application/json" \
+    -d '{"amount": 10}'
+
+# 减少计数器
+curl -X POST http://127.0.0.1:9845/api/v1/counter/0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266/decrement \
+    -H "Content-Type: application/json" \
+    -d '{"amount": 5}'
+
+# 获取状态根
+curl http://127.0.0.1:9845/api/v1/state-root
+```
+
+---
+
+#### 流程 4: P2P 全节点同步测试
+
+测试验证者和全节点之间的 P2P 区块同步功能。
+
+**运行测试**:
+```bash
+./scripts/test_flow4_p2p_sync.sh
+```
+
+**测试内容**:
+1. 清理数据目录
+2. 启动验证者节点（带 P2P）
+3. 获取验证者 enode URL
+4. 启动全节点，连接验证者
+5. 在验证者上发送 DexVM 交易
+6. 等待区块同步
+7. 验证区块高度和状态一致性
+
+**手动测试**:
+```bash
+# 终端 1: 启动验证者
+./scripts/start_validator.sh
+# 记录日志中的 Enode URL: enode://...@127.0.0.1:30303
+
+# 终端 2: 启动全节点连接验证者
+BOOTNODE="enode://...@127.0.0.1:30303" ./scripts/start_fullnode.sh
+
+# 终端 3: 检查同步状态
+# 验证者区块高度
+curl -s http://127.0.0.1:8545 -X POST -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+
+# 全节点区块高度
+curl -s http://127.0.0.1:8546 -X POST -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+```
+
+---
+
+### 运行所有测试 / Run All Tests
+
+```bash
+# 先启动节点
+./scripts/start_validator.sh
+
+# 在另一个终端运行测试
+./scripts/test_flow1_piggybank.sh  # EVM 合约测试
+./scripts/test_flow2_precompile.sh # 跨 VM 调用测试
+./scripts/test_flow3_dexvm_rpc.sh  # DexVM API 测试
+./scripts/test_flow4_p2p_sync.sh   # P2P 同步测试 (独立运行，会自动启动节点)
+```
+
+### 测试验证点 / Test Verification
+
+| 流程 | 验证点 |
+|------|--------|
+| 流程 1 | EVM 合约部署、调用、状态存储正常 |
+| 流程 2 | EVM → 预编译 → DexVM 跨 VM 调用正常，原子性回滚正常 |
+| 流程 3 | DexVM 独立 RPC 接口正常 |
+| 流程 4 | P2P 区块同步正常，全节点能同步验证者区块 |
 
 ### 集成测试脚本 / Integration Test Scripts
 
@@ -270,10 +479,24 @@ curl http://localhost:9845/api/v1/state-root
 
 ### 预编译合约 / Precompile Contract
 
-存款/取款预编译地址：`0x0000000000000000000000000000000000000100`
-- 发送 ETH 且 calldata 为空 = 存款
-- 发送带金额的 calldata = 取款
-- 空调用 = 查询余额
+计数器预编译地址：`0x0000000000000000000000000000000000000100`
+
+**Calldata 格式**: `[op: 1 byte][amount: 8 bytes big-endian]`
+- `0x00` + amount = Increment (增加计数器)
+- `0x01` + amount = Decrement (减少计数器)
+- `0x02` + padding = Query (查询计数器)
+
+**示例**:
+```bash
+# 增加计数器 10: 0x00 + 000000000000000a
+cast send 0x0000000000000000000000000000000000000100 0x00000000000000000a ...
+
+# 减少计数器 5: 0x01 + 0000000000000005
+cast send 0x0000000000000000000000000000000000000100 0x010000000000000005 ...
+
+# 查询计数器: 0x02 + padding
+cast call 0x0000000000000000000000000000000000000100 0x020000000000000000 ...
+```
 
 ## 项目结构 / Project Structure
 
@@ -283,18 +506,27 @@ dex-reth/
 │   └── main.rs
 ├── crates/
 │   ├── primitives/        # 核心类型 (DualVmTransaction, DexVmReceipt)
-│   ├── dexvm/             # DexVM 实现 (state.rs, executor.rs)
+│   ├── dexvm/             # DexVM 实现 (state.rs, executor.rs, precompiles.rs)
 │   ├── evm/               # EVM 执行器 (基于 revm 27)
 │   ├── storage/           # MDBX 数据库
 │   ├── rpc/               # REST API (Axum) + JSON-RPC (jsonrpsee)
 │   ├── p2p/               # P2P 网络 (eth devp2p)
-│   └── node/              # 节点集成 (DualVmNode, POA 共识)
+│   └── node/              # 节点集成 (DualVmNode, POA 共识, 跨 VM 执行)
+├── contracts/             # Solidity 合约
+│   └── PiggyBank.sol      # 测试存钱罐合约
 ├── scripts/               # 测试脚本
-│   ├── start_validator.sh # 启动验证者节点
-│   ├── start_fullnode.sh  # 启动全节点
-│   ├── test_evm.sh        # EVM 测试
-│   ├── test_counter.sh    # DexVM 测试
-│   └── test_e2e.sh        # 端到端测试
+│   ├── start_validator.sh       # 启动验证者节点
+│   ├── start_fullnode.sh        # 启动全节点
+│   ├── test_flow1_piggybank.sh  # 流程1: EVM 合约部署测试
+│   ├── test_flow2_precompile.sh # 流程2: 跨 VM 预编译调用测试
+│   ├── test_flow3_dexvm_rpc.sh  # 流程3: DexVM RPC 测试
+│   ├── test_flow4_p2p_sync.sh   # 流程4: P2P 全节点同步测试
+│   ├── test_evm.sh              # EVM JSON-RPC 测试
+│   ├── test_counter.sh          # DexVM 计数器测试
+│   └── test_e2e.sh              # 端到端测试
+├── draft/                 # 设计文档
+│   ├── discussion_test_flows.md      # 测试流程设计
+│   └── discussion_block_structure.md # 区块结构设计
 ├── genesis.json           # 创世配置
 ├── Cargo.toml
 ├── CLAUDE.md              # 开发指南
@@ -303,9 +535,77 @@ dex-reth/
 
 ## 状态根计算 / State Root
 
-- EVM: `keccak256(sorted_account_data)`
-- DexVM: `keccak256(sorted_counter_data)`
-- 组合: `keccak256(evm_root || dexvm_root)`
+系统为每个 VM 计算独立的状态根，然后组合成最终的 `combined_state_root`。
+
+### 计算公式
+
+| 状态根 | 计算方式 | 代码位置 |
+|--------|---------|----------|
+| EVM | `keccak256(addr + balance + nonce + code_hash)` | `crates/storage/src/state_store.rs:301` |
+| DexVM | `keccak256(sorted(addr + counter))` | `crates/dexvm/src/state.rs:58` |
+| Combined | `keccak256(evm_root \|\| dexvm_root)` | `crates/node/src/executor.rs:195` |
+
+### EVM 状态根
+
+遍历所有账户，按地址排序后计算：
+
+```rust
+// crates/storage/src/state_store.rs:301-332
+pub fn state_root(&self) -> B256 {
+    let mut data = Vec::new();
+    for (addr, account) in walker {
+        data.extend_from_slice(addr.as_slice());           // 20 bytes
+        data.extend_from_slice(&account.balance.to_be_bytes::<32>()); // 32 bytes
+        data.extend_from_slice(&account.nonce.to_be_bytes());         // 8 bytes
+        data.extend_from_slice(account.code_hash.as_slice());         // 32 bytes
+    }
+    keccak256(&data)
+}
+```
+
+### DexVM 状态根
+
+遍历所有计数器，按地址排序后计算：
+
+```rust
+// crates/dexvm/src/state.rs:58-75
+pub fn state_root(&self) -> B256 {
+    let mut accounts: Vec<_> = self.counters.iter().collect();
+    accounts.sort_by_key(|(addr, _)| *addr);
+
+    let mut data = Vec::new();
+    for (addr, counter) in accounts {
+        data.extend_from_slice(addr.as_slice());  // 20 bytes
+        data.extend_from_slice(&counter.to_be_bytes()); // 8 bytes
+    }
+    keccak256(&data)
+}
+```
+
+### 组合状态根
+
+简单拼接两个状态根后哈希：
+
+```rust
+// crates/node/src/executor.rs:195-202
+fn combine_state_roots(&self, evm_root: B256, dexvm_root: B256) -> B256 {
+    let mut data = Vec::with_capacity(64);
+    data.extend_from_slice(evm_root.as_slice());   // 32 bytes
+    data.extend_from_slice(dexvm_root.as_slice()); // 32 bytes
+    keccak256(&data)
+}
+```
+
+### 调用流程
+
+在区块执行完成后计算状态根：
+
+```rust
+// crates/node/src/executor.rs:136-138
+let evm_state_root = evm_executor.state_root();
+let dexvm_state_root = dexvm_executor.state_root();
+let combined_state_root = self.combine_state_roots(evm_state_root, dexvm_state_root);
+```
 
 ## 依赖版本 / Dependencies
 
@@ -324,6 +624,14 @@ dex-reth/
 - POA 共识：单验证者，可配置出块间隔（默认 500ms）
 - 数据持久化到 `./data` 目录
 - 日志级别：debug, info, warn, error
+- **状态持久化**：
+  - EVM 账户余额和 nonce 持久化到 MDBX
+  - DexVM 计数器状态持久化到 MDBX
+  - 节点重启后自动恢复所有状态
+- **P2P 同步**：
+  - 验证者节点广播新区块
+  - 全节点通过 devp2p 协议同步区块头和区块体
+  - 支持通过 `--bootnodes` 参数连接验证者
 
 ## License
 

@@ -1,6 +1,6 @@
 //! Block storage module using MDBX database
 
-use crate::tables::{DualvmBlocks, DualvmTxHashes, StoredDualvmBlock, StoredTxInfo};
+use crate::tables::{DualvmBlocks, DualvmTransactions, DualvmTxHashes, StoredDualvmBlock, StoredTransaction, StoredTxInfo};
 use alloy_primitives::{keccak256, Address, B256};
 use eyre::Result;
 use reth_db::DatabaseEnv;
@@ -29,6 +29,8 @@ pub struct StoredBlock {
     pub combined_state_root: B256,
     pub transaction_hashes: Vec<B256>,
     pub transaction_count: u64,
+    /// Block signature (65 bytes: r[32] + s[32] + v[1])
+    pub signature: [u8; 65],
 }
 
 impl StoredBlock {
@@ -48,6 +50,7 @@ impl StoredBlock {
             combined_state_root: B256::ZERO,
             transaction_hashes: vec![],
             transaction_count: 0,
+            signature: [0u8; 65],
         }
     }
 }
@@ -65,8 +68,9 @@ impl From<StoredDualvmBlock> for StoredBlock {
             evm_state_root: stored.evm_state_root,
             dexvm_state_root: stored.dexvm_state_root,
             combined_state_root: stored.combined_state_root,
-            transaction_hashes: vec![],
+            transaction_hashes: stored.transaction_hashes,
             transaction_count: stored.transaction_count,
+            signature: stored.signature,
         }
     }
 }
@@ -84,6 +88,8 @@ impl From<&StoredBlock> for StoredDualvmBlock {
             dexvm_state_root: block.dexvm_state_root,
             combined_state_root: block.combined_state_root,
             transaction_count: block.transaction_count,
+            signature: block.signature,
+            transaction_hashes: block.transaction_hashes.clone(),
         }
     }
 }
@@ -226,6 +232,62 @@ impl BlockStore {
         tracing::info!("Initialized genesis block for chain {}", chain_id);
         Ok(())
     }
+
+    /// Store a full transaction by its hash
+    pub fn store_transaction(&self, tx_hash: B256, rlp_bytes: Vec<u8>) -> Result<()> {
+        let tx = self.db.tx_mut()?;
+        tx.put::<DualvmTransactions>(tx_hash, StoredTransaction { rlp_bytes })?;
+        tx.commit()?;
+        tracing::debug!("Stored transaction {:?}", tx_hash);
+        Ok(())
+    }
+
+    /// Store multiple transactions in a single batch
+    pub fn store_transactions(&self, transactions: &[(B256, Vec<u8>)]) -> Result<()> {
+        if transactions.is_empty() {
+            return Ok(());
+        }
+        let tx = self.db.tx_mut()?;
+        for (tx_hash, rlp_bytes) in transactions {
+            tx.put::<DualvmTransactions>(*tx_hash, StoredTransaction { rlp_bytes: rlp_bytes.clone() })?;
+        }
+        tx.commit()?;
+        tracing::debug!("Stored {} transactions", transactions.len());
+        Ok(())
+    }
+
+    /// Get a transaction by its hash
+    pub fn get_transaction(&self, tx_hash: B256) -> Option<Vec<u8>> {
+        let tx = self.db.tx().ok()?;
+        tx.get::<DualvmTransactions>(tx_hash).ok()?.map(|t| t.rlp_bytes)
+    }
+
+    /// Get all transactions for a block by block number
+    pub fn get_block_transactions(&self, block_number: u64) -> Option<Vec<Vec<u8>>> {
+        let block = self.get_block_by_number(block_number)?;
+        let mut txs = Vec::with_capacity(block.transaction_hashes.len());
+
+        let tx = self.db.tx().ok()?;
+        for tx_hash in &block.transaction_hashes {
+            if let Ok(Some(stored_tx)) = tx.get::<DualvmTransactions>(*tx_hash) {
+                txs.push(stored_tx.rlp_bytes);
+            }
+        }
+
+        Some(txs)
+    }
+
+    /// Get transactions by their hashes
+    pub fn get_transactions_by_hashes(&self, hashes: &[B256]) -> Vec<Option<Vec<u8>>> {
+        let tx = match self.db.tx() {
+            Ok(tx) => tx,
+            Err(_) => return hashes.iter().map(|_| None).collect(),
+        };
+
+        hashes.iter().map(|hash| {
+            tx.get::<DualvmTransactions>(*hash).ok().flatten().map(|t| t.rlp_bytes)
+        }).collect()
+    }
 }
 
 #[cfg(test)]
@@ -263,6 +325,7 @@ mod tests {
             combined_state_root: B256::repeat_byte(0x44),
             transaction_hashes: vec![],
             transaction_count: 0,
+            signature: [0u8; 65],
         };
 
         store.store_block(block.clone()).unwrap();
