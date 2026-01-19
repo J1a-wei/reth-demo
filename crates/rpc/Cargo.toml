@@ -20,6 +20,10 @@ jsonrpsee = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 
+# HTTP middleware
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["cors"] }
+
 # Reth
 reth-ethereum-primitives = { workspace = true }
 

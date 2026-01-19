@@ -9,6 +9,7 @@ use jsonrpsee::{
     proc_macros::rpc,
     server::{ServerBuilder, ServerHandle},
 };
+use tower_http::cors::{Any, CorsLayer};
 use reth_ethereum_primitives::TransactionSigned;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -361,11 +362,14 @@ impl EthApiServer for EvmRpcServer {
             )
         })?;
 
-        tracing::info!("Received transaction {} from {}", tx_hash, caller);
-
         // Basic validation (don't execute yet - execution happens during block production)
         let caller_balance = self.state_store.get_balance(&caller);
         let caller_nonce = self.state_store.get_nonce(&caller);
+
+        tracing::info!(
+            "Received transaction {} from {}: nonce={}, balance={}, tx_nonce={}, value={}, gas_limit={}, gas_price={}",
+            tx_hash, caller, caller_nonce, caller_balance, tx.nonce(), tx.value(), tx.gas_limit(), tx.effective_gas_price(None)
+        );
 
         // Check nonce
         if tx.nonce() < caller_nonce {
@@ -501,7 +505,16 @@ pub async fn start_evm_rpc_server(
 
     let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
 
-    let server_builder = ServerBuilder::default().build(addr).await?;
+    // Configure CORS to allow any origin (for browser wallet compatibility)
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
+    let server_builder = ServerBuilder::default()
+        .set_http_middleware(tower::ServiceBuilder::new().layer(cors))
+        .build(addr)
+        .await?;
 
     let server_clone = Arc::clone(&server);
     let rpc_module = {

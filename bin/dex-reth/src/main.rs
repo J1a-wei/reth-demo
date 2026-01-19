@@ -643,6 +643,15 @@ async fn run_consensus_loop_with_p2p(
                 all_transactions.push(pending.tx.clone());
             }
 
+            if !all_transactions.is_empty() {
+                tracing::info!(
+                    "Processing block {} with {} transactions ({} from mempool)",
+                    proposal.number,
+                    all_transactions.len(),
+                    pending_txs.len()
+                );
+            }
+
             match node.executor_mut().execute_transactions(all_transactions.clone()) {
                 Ok(result) => {
                     tracing::info!(

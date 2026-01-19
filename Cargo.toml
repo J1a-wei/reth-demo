@@ -72,7 +72,8 @@ hex = "0.4"
 
 # Testing
 tempfile = "3"
-tower = "0.5"
+tower = "0.4"
+tower-http = "0.5"
 
 [profile.release]
 lto = true

@@ -93,13 +93,28 @@ impl SimpleEvmExecutor {
         }
 
         // Deduct balance and increment nonce
-        self.set_balance(caller, caller_balance - tx_cost);
-        let _ = self.state_store.increment_nonce(caller);
+        let new_balance = caller_balance - tx_cost;
+        self.set_balance(caller, new_balance);
+        let new_nonce = self.state_store.increment_nonce(caller).unwrap_or(caller_nonce + 1);
+
+        tracing::info!(
+            "TX executed: from={}, to={:?}, value={}, gas_cost={}, balance: {} -> {}, nonce: {} -> {}",
+            caller,
+            tx.to(),
+            tx_value,
+            tx_cost - tx_value,
+            caller_balance,
+            new_balance,
+            caller_nonce,
+            new_nonce
+        );
 
         // Transfer value to recipient
         if let Some(to) = tx.to() {
             let to_balance = self.get_balance(&to);
-            self.set_balance(to, to_balance + tx_value);
+            let to_new_balance = to_balance + tx_value;
+            self.set_balance(to, to_new_balance);
+            tracing::debug!("Recipient {} balance: {} -> {}", to, to_balance, to_new_balance);
         }
 
         Ok(Receipt { status: true.into(), cumulative_gas_used: 21000, logs: vec![] })
