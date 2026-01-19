@@ -230,7 +230,7 @@ async fn handle_incoming_message(
             debug!("Received {} transactions from peer {}", txs.0.len(), peer_id);
             // Forward transactions to be processed
             let rlp_txs: Vec<Vec<u8>> = txs.0.iter()
-                .map(|tx| alloy_rlp::encode(tx))
+                .map(alloy_rlp::encode)
                 .collect();
             event_tx.send(EthHandlerEvent::Transactions { peer_id, transactions: rlp_txs }).await?;
         }

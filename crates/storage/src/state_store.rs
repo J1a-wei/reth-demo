@@ -315,13 +315,11 @@ impl StateStore {
             Err(_) => return B256::ZERO,
         };
 
-        for result in walker {
-            if let Ok((addr, account)) = result {
-                data.extend_from_slice(addr.as_slice());
-                data.extend_from_slice(&account.balance.to_be_bytes::<32>());
-                data.extend_from_slice(&account.nonce.to_be_bytes());
-                data.extend_from_slice(account.code_hash.as_slice());
-            }
+        for (addr, account) in walker.flatten() {
+            data.extend_from_slice(addr.as_slice());
+            data.extend_from_slice(&account.balance.to_be_bytes::<32>());
+            data.extend_from_slice(&account.nonce.to_be_bytes());
+            data.extend_from_slice(account.code_hash.as_slice());
         }
 
         if data.is_empty() {
@@ -350,10 +348,8 @@ impl StateStore {
             Err(_) => return result,
         };
 
-        for entry in walker {
-            if let Ok((addr, stored)) = entry {
-                result.insert(addr, stored.into());
-            }
+        for (addr, stored) in walker.flatten() {
+            result.insert(addr, stored.into());
         }
 
         result
@@ -378,10 +374,8 @@ impl StateStore {
             Err(_) => return result,
         };
 
-        for entry in walker {
-            if let Ok((addr, stored)) = entry {
-                result.insert(addr, stored.value);
-            }
+        for (addr, stored) in walker.flatten() {
+            result.insert(addr, stored.value);
         }
 
         result

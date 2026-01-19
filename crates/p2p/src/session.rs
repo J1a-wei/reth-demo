@@ -79,7 +79,7 @@ async fn eth_status_handshake(
 ) -> eyre::Result<Status> {
     // Send our status
     let status_msg = ProtocolMessage::<EthNetworkPrimitives>::from(
-        EthMessage::Status(StatusMessage::Legacy(our_status.clone()))
+        EthMessage::Status(StatusMessage::Legacy(our_status))
     );
     let encoded = alloy_rlp::encode(&status_msg);
     stream.send(encoded.into()).await?;

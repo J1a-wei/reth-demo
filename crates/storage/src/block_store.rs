@@ -162,13 +162,11 @@ impl BlockStore {
         let mut cursor = tx.cursor_read::<DualvmBlocks>().ok()?;
         let walker = cursor.walk(None).ok()?;
 
-        for result in walker {
-            if let Ok((number, stored)) = result {
-                if stored.hash == hash {
-                    let mut block: StoredBlock = stored.into();
-                    block.number = number;
-                    return Some(block);
-                }
+        for (number, stored) in walker.flatten() {
+            if stored.hash == hash {
+                let mut block: StoredBlock = stored.into();
+                block.number = number;
+                return Some(block);
             }
         }
 

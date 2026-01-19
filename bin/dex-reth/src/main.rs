@@ -759,6 +759,15 @@ async fn run_consensus_loop_with_p2p(
                         tracing::error!("Failed to store transactions: {}", e);
                     }
 
+                    // Persist DexVM counter state to database
+                    if let Ok(dexvm_exec) = node.executor().dexvm_executor().read() {
+                        for (address, &value) in dexvm_exec.state().all_accounts() {
+                            if let Err(e) = node.state_store().set_counter(*address, value) {
+                                tracing::error!("Failed to persist DexVM counter for {}: {}", address, e);
+                            }
+                        }
+                    }
+
                     // Finalize block (short borrow)
                     if let Some(consensus) = node.consensus() {
                         consensus.finalize_block(result.combined_state_root);
@@ -1031,8 +1040,7 @@ async fn main() -> eyre::Result<()> {
         };
 
         // Start transaction broadcast handler if P2P is enabled
-        let tx_broadcast_handle = if let Some(p2p_handle) = _p2p_handle.clone() {
-            Some(tokio::spawn(async move {
+        let tx_broadcast_handle = _p2p_handle.clone().map(|p2p_handle| tokio::spawn(async move {
                 tracing::info!("Starting transaction broadcast handler");
                 while let Some(tx_rlp) = tx_broadcast_rx.recv().await {
                     tracing::debug!("Broadcasting transaction to peers");
@@ -1043,10 +1051,7 @@ async fn main() -> eyre::Result<()> {
                         tracing::warn!("Failed to broadcast transaction: {}", e);
                     }
                 }
-            }))
-        } else {
-            None
-        };
+            }));
 
         tracing::info!("");
         tracing::info!("Press Ctrl+C to stop");
