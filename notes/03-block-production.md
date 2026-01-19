@@ -147,25 +147,25 @@ BlockProposal
 
 ```mermaid
 flowchart TD
-    subgraph "EVM State Root"
+    subgraph EVM_State_Root
         EVM_START[遍历所有账户] --> EVM_SORT[按地址排序]
-        EVM_SORT --> EVM_CONCAT["拼接每个账户:<br/>address[20] || balance[32] || nonce[8] || code_hash[32]"]
-        EVM_CONCAT --> EVM_HASH["keccak256(all_data)"]
-        EVM_HASH --> EVM_ROOT["evm_state_root: B256"]
+        EVM_SORT --> EVM_CONCAT["拼接 address+balance+nonce+code_hash"]
+        EVM_CONCAT --> EVM_HASH["keccak256"]
+        EVM_HASH --> EVM_ROOT["evm_state_root"]
     end
 
-    subgraph "DexVM State Root"
+    subgraph DexVM_State_Root
         DEXVM_START[遍历所有计数器] --> DEXVM_SORT[按地址排序]
-        DEXVM_SORT --> DEXVM_CONCAT["拼接每个计数器:<br/>address[20] || counter[8]"]
-        DEXVM_CONCAT --> DEXVM_HASH["keccak256(all_data)"]
-        DEXVM_HASH --> DEXVM_ROOT["dexvm_state_root: B256"]
+        DEXVM_SORT --> DEXVM_CONCAT["拼接 address+counter"]
+        DEXVM_CONCAT --> DEXVM_HASH["keccak256"]
+        DEXVM_HASH --> DEXVM_ROOT["dexvm_state_root"]
     end
 
-    subgraph "Combined State Root"
-        EVM_ROOT --> COMBINE["拼接: evm_root[32] || dexvm_root[32]"]
+    subgraph Combined_State_Root
+        EVM_ROOT --> COMBINE["拼接 evm_root + dexvm_root"]
         DEXVM_ROOT --> COMBINE
-        COMBINE --> FINAL_HASH["keccak256(combined)"]
-        FINAL_HASH --> COMBINED_ROOT["combined_state_root: B256"]
+        COMBINE --> FINAL_HASH["keccak256"]
+        FINAL_HASH --> COMBINED_ROOT["combined_state_root"]
     end
 ```
 

@@ -35,7 +35,7 @@
 
 ```mermaid
 flowchart TD
-    START[DualvmStorage::new(path)] --> CHECK{mdbx.dat 存在?}
+    START["DualvmStorage::new(path)"] --> CHECK{mdbx.dat 存在?}
 
     CHECK -->|否| NEW_DB[标记为新数据库]
     CHECK -->|是| EXISTING[标记为已有数据库]
@@ -43,16 +43,16 @@ flowchart TD
     NEW_DB --> CREATE_DIR[创建数据目录]
     EXISTING --> CREATE_DIR
 
-    CREATE_DIR --> INIT_DB["init_db_for::<DualvmTableSet>(path)"]
+    CREATE_DIR --> INIT_DB["init_db_for DualvmTableSet"]
     INIT_DB --> CREATE_STORES[创建 BlockStore + StateStore]
 
     CREATE_STORES --> RETURN["返回 DualvmStorage"]
 
-    subgraph "节点启动时"
+    subgraph 节点启动时
         NODE_START[DualVmNode 启动] --> CHECK_NEW{是新数据库?}
 
-        CHECK_NEW -->|是| INIT_GENESIS["初始化 Genesis:<br/>1. 写入账户余额<br/>2. 创建创世区块"]
-        CHECK_NEW -->|否| LOAD_STATE["加载已有状态:<br/>1. 读取最新区块号<br/>2. 加载 DexVM 计数器"]
+        CHECK_NEW -->|是| INIT_GENESIS["初始化 Genesis"]
+        CHECK_NEW -->|否| LOAD_STATE["加载已有状态"]
 
         INIT_GENESIS --> READY[节点就绪]
         LOAD_STATE --> READY
@@ -65,9 +65,9 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    STORE[store_block(StoredBlock)] --> START_TX[开始 MDBX 写事务]
+    STORE["store_block(StoredBlock)"] --> START_TX[开始 MDBX 写事务]
 
-    START_TX --> PUT_BLOCK["put::<DualvmBlocks>(number, block)"]
+    START_TX --> PUT_BLOCK["put DualvmBlocks"]
     PUT_BLOCK --> UPDATE_LATEST[更新 latest_block_number]
     UPDATE_LATEST --> COMMIT[提交事务]
 
@@ -78,15 +78,15 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    subgraph "按区块号查询"
-        BY_NUM[get_block_by_number(num)] --> READ_TX1[开始读事务]
-        READ_TX1 --> GET1["get::<DualvmBlocks>(num)"]
+    subgraph 按区块号查询
+        BY_NUM["get_block_by_number(num)"] --> READ_TX1[开始读事务]
+        READ_TX1 --> GET1["get DualvmBlocks"]
         GET1 --> DECODE1[解码 StoredBlock]
-        DECODE1 --> RETURN1[返回 Option<StoredBlock>]
+        DECODE1 --> RETURN1["返回 Option"]
     end
 
-    subgraph "按哈希查询"
-        BY_HASH[get_block_by_hash(hash)] --> SCAN[遍历所有区块]
+    subgraph 按哈希查询
+        BY_HASH["get_block_by_hash(hash)"] --> SCAN[遍历所有区块]
         SCAN --> MATCH{hash 匹配?}
         MATCH -->|是| RETURN2[返回区块]
         MATCH -->|否| CONTINUE[继续遍历]
@@ -98,12 +98,12 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    STORE_TX["store_transactions(Vec<(B256, Vec<u8>)>)"]
+    STORE_TX["store_transactions(txs)"]
 
     STORE_TX --> START_TX[开始写事务]
     START_TX --> LOOP[遍历交易]
 
-    LOOP --> PUT_TX["put::<DualvmTransactions>(hash, rlp_bytes)"]
+    LOOP --> PUT_TX["put DualvmTransactions"]
     PUT_TX --> NEXT{还有更多?}
     NEXT -->|是| LOOP
     NEXT -->|否| COMMIT[提交事务]
@@ -196,12 +196,12 @@ pub fn increment_counter(&self, address: Address, amount: u64) -> Result<u64> {
 
 ```mermaid
 flowchart TD
-    subgraph "EVM State Root"
-        E_START[state_root()] --> E_READ[开始读事务]
+    subgraph EVM_State_Root
+        E_START["state_root()"] --> E_READ[开始读事务]
         E_READ --> E_CURSOR[创建账户游标]
         E_CURSOR --> E_WALK[遍历所有账户]
 
-        E_WALK --> E_CONCAT["拼接数据:<br/>address[20]<br/>balance[32]<br/>nonce[8]<br/>code_hash[32]"]
+        E_WALK --> E_CONCAT["拼接 address+balance+nonce+code_hash"]
 
         E_CONCAT --> E_NEXT{还有更多账户?}
         E_NEXT -->|是| E_WALK
@@ -210,11 +210,11 @@ flowchart TD
         E_HASH --> E_RETURN[返回 B256]
     end
 
-    subgraph "DexVM State Root"
-        D_START[state_root()] --> D_SORT[按地址排序计数器]
+    subgraph DexVM_State_Root
+        D_START["state_root()"] --> D_SORT[按地址排序计数器]
         D_SORT --> D_WALK[遍历所有计数器]
 
-        D_WALK --> D_CONCAT["拼接数据:<br/>address[20]<br/>counter[8]"]
+        D_WALK --> D_CONCAT["拼接 address+counter"]
 
         D_CONCAT --> D_NEXT{还有更多?}
         D_NEXT -->|是| D_WALK
@@ -331,7 +331,7 @@ flowchart TD
     CREATE_GENESIS_BLOCK --> READY[节点就绪]
 
     CHECK -->|是| LOAD_LATEST[加载最新区块号]
-    LOAD_LATEST --> LOAD_ACCOUNTS["加载 EVM 账户状态<br/>(自动从 MDBX)"]
+    LOAD_LATEST --> LOAD_ACCOUNTS["加载 EVM 账户状态"]
     LOAD_ACCOUNTS --> LOAD_COUNTERS[加载 DexVM 计数器]
     LOAD_COUNTERS --> RESTORE_STATE["恢复到 DexVmState 内存"]
     RESTORE_STATE --> READY

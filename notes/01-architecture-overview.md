@@ -57,42 +57,42 @@
 
 ```mermaid
 graph TD
-    subgraph "bin/dex-reth"
-        MAIN[main.rs<br/>CLI 入口]
+    subgraph bin_dex_reth
+        MAIN[main.rs]
     end
 
-    subgraph "crates/node"
-        NODE[DualVmNode<br/>节点编排]
-        EXECUTOR[DualVmExecutor<br/>双 VM 执行器]
-        EVM_EXEC[SimpleEvmExecutor<br/>EVM 执行器]
-        CONSENSUS[PoaConsensus<br/>POA 共识]
+    subgraph crates_node
+        NODE[DualVmNode]
+        EXECUTOR[DualVmExecutor]
+        EVM_EXEC[SimpleEvmExecutor]
+        CONSENSUS[PoaConsensus]
     end
 
-    subgraph "crates/dexvm"
-        DEXVM_EXEC[DexVmExecutor<br/>DexVM 执行器]
-        DEXVM_STATE[DexVmState<br/>计数器状态]
-        PRECOMPILE[PrecompileExecutor<br/>预编译合约]
+    subgraph crates_dexvm
+        DEXVM_EXEC[DexVmExecutor]
+        DEXVM_STATE[DexVmState]
+        PRECOMPILE[PrecompileExecutor]
     end
 
-    subgraph "crates/primitives"
-        TX[DualVmTransaction<br/>交易路由]
-        RECEIPT[DexVmReceipt<br/>执行收据]
+    subgraph crates_primitives
+        TX[DualVmTransaction]
+        RECEIPT[DexVmReceipt]
     end
 
-    subgraph "crates/storage"
-        STORAGE[DualvmStorage<br/>存储管理]
-        BLOCK_STORE[BlockStore<br/>区块存储]
-        STATE_STORE[StateStore<br/>状态存储]
+    subgraph crates_storage
+        STORAGE[DualvmStorage]
+        BLOCK_STORE[BlockStore]
+        STATE_STORE[StateStore]
     end
 
-    subgraph "crates/rpc"
-        EVM_RPC[EvmRpcServer<br/>JSON-RPC]
-        DEXVM_API[DexVmApi<br/>REST API]
+    subgraph crates_rpc
+        EVM_RPC[EvmRpcServer]
+        DEXVM_API[DexVmApi]
     end
 
-    subgraph "crates/p2p"
-        P2P_SERVICE[P2pService<br/>P2P 服务]
-        ETH_HANDLER[EthHandler<br/>ETH 协议]
+    subgraph crates_p2p
+        P2P_SERVICE[P2pService]
+        ETH_HANDLER[EthHandler]
     end
 
     MAIN --> NODE

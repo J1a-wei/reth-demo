@@ -88,24 +88,24 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    subgraph "入站消息 (从远程节点接收)"
-        IN_NBH[NewBlockHashes<br/>区块哈希通告]
-        IN_NB[NewBlock<br/>完整区块]
-        IN_GH[GetBlockHeaders<br/>请求区块头]
-        IN_H[BlockHeaders<br/>区块头响应]
-        IN_GB[GetBlockBodies<br/>请求区块体]
-        IN_B[BlockBodies<br/>区块体响应]
-        IN_TX[Transactions<br/>交易广播]
+    subgraph 入站消息
+        IN_NBH[NewBlockHashes]
+        IN_NB[NewBlock]
+        IN_GH[GetBlockHeaders]
+        IN_H[BlockHeaders]
+        IN_GB[GetBlockBodies]
+        IN_B[BlockBodies]
+        IN_TX[Transactions]
     end
 
-    subgraph "P2P 事件"
-        E_NBH[P2pEvent::NewBlockHash]
-        E_NB[P2pEvent::NewBlock]
-        E_GHR[P2pEvent::GetBlockHeadersRequest]
-        E_H[P2pEvent::BlockHeaders]
-        E_GBR[P2pEvent::GetBlockBodiesRequest]
-        E_B[P2pEvent::BlockBodies]
-        E_TX[P2pEvent::Transactions]
+    subgraph P2P事件
+        E_NBH["NewBlockHash"]
+        E_NB["NewBlock"]
+        E_GHR["GetBlockHeadersRequest"]
+        E_H["BlockHeaders"]
+        E_GBR["GetBlockBodiesRequest"]
+        E_B["BlockBodies"]
+        E_TX["Transactions"]
     end
 
     IN_NBH --> E_NBH
@@ -116,13 +116,13 @@ flowchart TD
     IN_B --> E_B
     IN_TX --> E_TX
 
-    subgraph "出站命令 (发送到远程节点)"
-        OUT_BB[BroadcastBlock<br/>广播新区块]
-        OUT_GH[GetBlockHeaders<br/>请求区块头]
-        OUT_SH[SendBlockHeaders<br/>发送区块头]
-        OUT_GB[GetBlockBodies<br/>请求区块体]
-        OUT_SB[SendBlockBodies<br/>发送区块体]
-        OUT_TX[BroadcastTransactions<br/>广播交易]
+    subgraph 出站命令
+        OUT_BB[BroadcastBlock]
+        OUT_GH[GetBlockHeaders]
+        OUT_SH[SendBlockHeaders]
+        OUT_GB[GetBlockBodies]
+        OUT_SB[SendBlockBodies]
+        OUT_TX[BroadcastTransactions]
     end
 ```
 

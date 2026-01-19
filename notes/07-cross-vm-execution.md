@@ -226,11 +226,11 @@ flowchart TD
     INC_NONCE2 --> RETURN_FAIL
     INC_NONCE3 --> RETURN_SUCCESS[返回成功 Receipt]
 
-    subgraph "原子性规则"
-        RULE1["EVM 失败 → DexVM 不变"]
-        RULE2["预编译失败 → EVM 回滚 + DexVM 不变"]
-        RULE3["都成功 → 两边状态都保留"]
-        RULE4["Gas 总是消耗 (nonce 总是增加)"]
+    subgraph 原子性规则
+        RULE1["EVM 失败则 DexVM 不变"]
+        RULE2["预编译失败则 EVM 回滚"]
+        RULE3["都成功则两边状态都保留"]
+        RULE4["Gas 总是消耗"]
     end
 ```
 
