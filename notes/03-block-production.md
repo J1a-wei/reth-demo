@@ -76,20 +76,20 @@ sequenceDiagram
 flowchart TD
     START[创建区块提案] --> PREPARE[准备签名数据]
 
-    PREPARE --> HASH_DATA["计算签名哈希:<br/>keccak256(number || parent_hash || timestamp || proposer)"]
+    PREPARE --> HASH_DATA["keccak256 签名哈希"]
 
     HASH_DATA --> SIGN[ECDSA 签名]
     SIGN --> EXTRACT[提取签名分量]
 
-    EXTRACT --> R["r: B256 (32 bytes)"]
-    EXTRACT --> S["s: B256 (32 bytes)"]
-    EXTRACT --> V["v: u8 (1 byte)"]
+    EXTRACT --> R["r: 32 bytes"]
+    EXTRACT --> S["s: 32 bytes"]
+    EXTRACT --> V["v: 1 byte"]
 
     R --> COMBINE[组合签名]
     S --> COMBINE
     V --> COMBINE
 
-    COMBINE --> STORE["存储到 BlockSignature:<br/>[r || s || v] = 65 bytes"]
+    COMBINE --> STORE["存储到 BlockSignature 65 bytes"]
 
     STORE --> EXTRA_DATA[写入区块 extra_data]
 ```
@@ -100,11 +100,11 @@ flowchart TD
 flowchart TD
     START[执行完成] --> BUILD_HEADER[构建 ConsensusHeader]
 
-    BUILD_HEADER --> FIELDS["填充字段:<br/>parent_hash<br/>ommers_hash = keccak256([0x80])<br/>beneficiary<br/>state_root<br/>transactions_root<br/>receipts_root<br/>logs_bloom = Bloom::ZERO<br/>difficulty = 0<br/>number<br/>gas_limit<br/>gas_used<br/>timestamp<br/>extra_data = signature<br/>mix_hash = B256::ZERO<br/>nonce = B64::ZERO<br/>base_fee_per_gas = Some(0)"]
+    BUILD_HEADER --> FIELDS["填充 Header 各字段"]
 
     FIELDS --> RLP_ENCODE[RLP 编码 Header]
-    RLP_ENCODE --> KECCAK[keccak256(rlp_bytes)]
-    KECCAK --> BLOCK_HASH["block_hash: B256"]
+    RLP_ENCODE --> KECCAK["keccak256"]
+    KECCAK --> BLOCK_HASH["block_hash"]
 
     BLOCK_HASH --> STORE[存储到 StoredBlock]
 ```
